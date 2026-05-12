@@ -419,6 +419,7 @@ resource "aws_cloudwatch_metric_alarm" "rack_attack_throttle_alarm" {
   threshold           = 50
   period              = 60
   alarm_description   = "Alert on Rack::Attack IP throttling (status=429) excluding agentmon."
+  actions_enabled     = var.enable_rack_attack_throttle_alert
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }

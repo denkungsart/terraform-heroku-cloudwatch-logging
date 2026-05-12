@@ -30,6 +30,12 @@ variable "resource_namespace" {
   }
 }
 
+variable "enable_rack_attack_throttle_alert" {
+  type        = bool
+  description = "Enable SNS notifications for the Rack::Attack status=429 throttle alarm."
+  default     = false
+}
+
 variable "heroku_app_id" {
   type        = string
   description = "The Heroku app ID to attach the log drain to."
