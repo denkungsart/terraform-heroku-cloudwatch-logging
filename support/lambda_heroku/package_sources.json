@@ -1,0 +1,11 @@
+[
+  {
+    "npm_requirements": "package.json"
+  },
+  {
+    "path": "package.json"
+  },
+  {
+    "path": "lambda_heroku_logs_index.js"
+  }
+]

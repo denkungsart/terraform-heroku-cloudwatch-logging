@@ -1,0 +1,9 @@
+{
+    "name": "lambda_heroku_logs",
+    "version": "1.0.0",
+    "type": "module",
+    "dependencies": {
+        "@aws-sdk/client-cloudwatch-logs": "^3.1004.0",
+        "@aws-sdk/client-firehose": "^3.1004.0"
+    }
+}

@@ -1,0 +1,36 @@
+name: Heroku Logs Lambda Package
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/heroku-logs-lambda-package.yml"
+      - "main.tf"
+      - "scripts/check-heroku-logs-lambda-package.sh"
+      - "support/lambda_heroku/**"
+  push:
+    paths:
+      - ".github/workflows/heroku-logs-lambda-package.yml"
+      - "main.tf"
+      - "scripts/check-heroku-logs-lambda-package.sh"
+      - "support/lambda_heroku/**"
+
+jobs:
+  validate-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.1"
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Validate Heroku Logs Lambda Package
+        run: ./scripts/check-heroku-logs-lambda-package.sh
