@@ -13,6 +13,12 @@ variable "alert_email" {
   description = "The email address to receive CloudWatch alerts."
 }
 
+variable "lambda_source_path" {
+  type        = string
+  description = "Optional path to the Heroku logs Lambda source package directory. Defaults to this module's bundled support/lambda_heroku directory."
+  default     = null
+}
+
 variable "heroku_app_id" {
   type        = string
   description = "The Heroku app ID to attach the log drain to."

@@ -1,6 +1,10 @@
 # Logging pipeline that ingests Heroku logs
 # -------------------------------------------------------------------------------
 
+locals {
+  lambda_source_path = coalesce(var.lambda_source_path, "${path.module}/support/lambda_heroku")
+}
+
 # CloudWatch log groups
 # -------------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "firehose_diagnostics" {
@@ -113,9 +117,9 @@ module "heroku_logs_lambda" {
   # Package deterministic npm dependencies from package-lock.json and include the runtime files
   # needed to load the ESM handler, without re-zipping local node_modules from the working tree.
   source_path = [
-    for claim in jsondecode(file("${path.module}/support/lambda_heroku/package_sources.json")) : {
+    for claim in jsondecode(file("${local.lambda_source_path}/package_sources.json")) : {
       for key, value in claim :
-      key => "${path.module}/support/lambda_heroku/${value}"
+      key => "${local.lambda_source_path}/${value}"
     }
   ]
 
