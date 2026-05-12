@@ -36,6 +36,12 @@ variable "enable_rack_attack_throttle_alert" {
   default     = false
 }
 
+variable "enable_redis_load_avg_alert" {
+  type        = bool
+  description = "Create the Redis load average alert."
+  default     = false
+}
+
 variable "heroku_app_id" {
   type        = string
   description = "The Heroku app ID to attach the log drain to."

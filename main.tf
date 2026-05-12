@@ -291,7 +291,41 @@ resource "aws_cloudwatch_metric_alarm" "redis_command_error_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 3. Heroku HTTP error - code=H* excluding specific codes
+# 3. Redis Load Average - "redis load-avg" excluding zero load averages
+resource "aws_cloudwatch_log_metric_filter" "redis_load_avg" {
+  count = var.enable_redis_load_avg_alert ? 1 : 0
+
+  name           = "${var.app_name}_RedisLoadAvg"
+  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
+
+  pattern = "redis \"load-avg\" -\"load-avg-1m=0\" -\"load-avg-5m=0\""
+
+  metric_transformation {
+    name      = "RedisLoadAverage"
+    namespace = "${local.namespace_prefix}/Redis"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "redis_load_avg_alarm" {
+  count = var.enable_redis_load_avg_alert ? 1 : 0
+
+  alarm_name          = "${var.app_name}_RedisLoadAvg_Alarm"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.redis_load_avg[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.redis_load_avg[0].metric_transformation[0].namespace
+  statistic           = "Sum"
+  threshold           = 10
+  period              = 300
+  alarm_description   = "Alert when Redis load average is non-zero repeatedly."
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+}
+
+# 4. Heroku HTTP error - code=H* excluding specific codes
 resource "aws_cloudwatch_log_metric_filter" "heroku_http_error" {
   name           = "${var.app_name}_HerokuHTTPError"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -320,7 +354,7 @@ resource "aws_cloudwatch_metric_alarm" "heroku_http_error_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 4. Heroku Runtime Error - "Error R" excluding R14
+# 5. Heroku Runtime Error - "Error R" excluding R14
 resource "aws_cloudwatch_log_metric_filter" "heroku_runtime_error" {
   name           = "${var.app_name}_HerokuRuntimeError"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -349,7 +383,7 @@ resource "aws_cloudwatch_metric_alarm" "heroku_runtime_error_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 5. Poison Pill - Poison pill killed by Sidekiq
+# 6. Poison Pill - Poison pill killed by Sidekiq
 resource "aws_cloudwatch_log_metric_filter" "poison_pill" {
   name           = "${var.app_name}_PoisonPill"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -378,7 +412,7 @@ resource "aws_cloudwatch_metric_alarm" "poison_pill_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 6. Sidekiq Queue Latency - monitor queue latency from custom metric
+# 7. Sidekiq Queue Latency - monitor queue latency from custom metric
 resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
   alarm_name          = "${var.app_name}_SidekiqQueueLatency_Alarm"
   comparison_operator = "GreaterThanThreshold"
@@ -394,7 +428,7 @@ resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
   treat_missing_data  = "notBreaching"
 }
 
-# 7. Rack::Attack Throttling - status=429 excluding agentmon
+# 8. Rack::Attack Throttling - status=429 excluding agentmon
 resource "aws_cloudwatch_log_metric_filter" "rack_attack_throttle" {
   name           = "${var.app_name}_RackAttackThrottle"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -424,7 +458,7 @@ resource "aws_cloudwatch_metric_alarm" "rack_attack_throttle_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 8. Postgres Load Average - "postgres load-avg" excluding specific load averages
+# 9. Postgres Load Average - "postgres load-avg" excluding specific load averages
 resource "aws_cloudwatch_log_metric_filter" "postgres_load_avg" {
   name           = "${var.app_name}_PostgresLoadAvg"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -454,7 +488,7 @@ resource "aws_cloudwatch_metric_alarm" "postgres_load_avg_alarm" {
   ok_actions          = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 9. Sentry Error - "ERROR -- sentry:"
+# 10. Sentry Error - "ERROR -- sentry:"
 resource "aws_cloudwatch_log_metric_filter" "sentry_error" {
   name           = "${var.app_name}_SentryError"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -483,7 +517,7 @@ resource "aws_cloudwatch_metric_alarm" "sentry_error_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 10. postgresql type_map initialization race condition https://github.com/rails/rails/issues/51780
+# 11. postgresql type_map initialization race condition https://github.com/rails/rails/issues/51780
 resource "aws_cloudwatch_log_metric_filter" "postgres_race_condition" {
   name           = "${var.app_name}_PostgresRaceCondition"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
