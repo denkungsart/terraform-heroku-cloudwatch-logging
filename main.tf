@@ -3,24 +3,35 @@
 
 locals {
   lambda_source_path = coalesce(var.lambda_source_path, "${path.module}/support/lambda_heroku")
+  namespace          = var.resource_namespace == null || trimspace(var.resource_namespace) == "" ? null : trimspace(var.resource_namespace)
+
+  firehose_diagnostics_log_group_name = local.namespace == null ? "/firehose/diagnostics" : "/firehose/${local.namespace}/diagnostics"
+  firehose_delivery_stream_name       = local.namespace == null ? "heroku-logs-delivery" : "${local.namespace}-heroku-logs-delivery"
+  firehose_log_stream_name            = local.namespace == null ? "firehose-delivery-stream" : "${local.namespace}-firehose-delivery-stream"
+  firehose_role_name                  = local.namespace == null ? "firehose_delivery_role" : "${local.namespace}-firehose-delivery-role"
+  firehose_s3_error_prefix            = local.namespace == null ? "heroku-logs-error/" : "heroku-logs-error/${local.namespace}/"
+  firehose_s3_prefix                  = local.namespace == null ? "heroku-logs/" : "heroku-logs/${local.namespace}/"
+  heroku_logs_log_group_name          = local.namespace == null ? "/heroku/logs" : "/heroku/${local.namespace}/logs"
+  heroku_logs_log_stream_name         = local.namespace == null ? "heroku-logs-stream" : "${local.namespace}-heroku-logs-stream"
+  lambda_function_name                = local.namespace == null ? "heroku-logs-lambda" : "${local.namespace}-heroku-logs-lambda"
 }
 
 # CloudWatch log groups
 # -------------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "firehose_diagnostics" {
-  name              = "/firehose/diagnostics"
+  name              = local.firehose_diagnostics_log_group_name
   retention_in_days = 60
 }
 
 resource "aws_cloudwatch_log_group" "heroku_logs" {
-  name              = "/heroku/logs"
+  name              = local.heroku_logs_log_group_name
   retention_in_days = 60
 }
 
 # IAM role for Kinesis Firehose
 # -------------------------------------------------------------------------------
 resource "aws_iam_role" "firehose_role" {
-  name               = "firehose_delivery_role"
+  name               = local.firehose_role_name
   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
 }
 
@@ -71,14 +82,14 @@ resource "aws_iam_role_policy" "firehose_role_policy" {
 # Kinesis Firehose delivery stream
 # -------------------------------------------------------------------------------
 resource "aws_kinesis_firehose_delivery_stream" "heroku_logs_stream" {
-  name        = "heroku-logs-delivery"
+  name        = local.firehose_delivery_stream_name
   destination = "extended_s3"
 
   extended_s3_configuration {
     role_arn            = aws_iam_role.firehose_role.arn
     bucket_arn          = var.log_bucket_arn
-    prefix              = "heroku-logs/"       # S3 key prefix
-    error_output_prefix = "heroku-logs-error/" # S3 error prefix
+    prefix              = local.firehose_s3_prefix       # S3 key prefix
+    error_output_prefix = local.firehose_s3_error_prefix # S3 error prefix
 
     buffering_size     = 5  # MB
     buffering_interval = 60 # seconds
@@ -88,7 +99,7 @@ resource "aws_kinesis_firehose_delivery_stream" "heroku_logs_stream" {
     cloudwatch_logging_options {
       enabled         = true
       log_group_name  = aws_cloudwatch_log_group.firehose_diagnostics.name
-      log_stream_name = "firehose-delivery-stream"
+      log_stream_name = local.firehose_log_stream_name
     }
   }
 }
@@ -109,7 +120,7 @@ module "heroku_logs_lambda" {
   source  = "terraform-aws-modules/lambda/aws"
   version = "~> 8.0"
 
-  function_name = "heroku-logs-lambda"
+  function_name = local.lambda_function_name
   description   = "Lambda function for ingesting Heroku logs, forwarding raw logs to Firehose for S3 archival and to CloudWatch Logs for real-time analysis"
   handler       = "lambda_heroku_logs_index.handler"
   runtime       = "nodejs22.x"
@@ -129,7 +140,7 @@ module "heroku_logs_lambda" {
   environment_variables = {
     FIREHOSE_STREAM_NAME = aws_kinesis_firehose_delivery_stream.heroku_logs_stream.name
     HEROKU_LOGS_GROUP    = aws_cloudwatch_log_group.heroku_logs.name
-    HEROKU_LOGS_STREAM   = "heroku-logs-stream"
+    HEROKU_LOGS_STREAM   = local.heroku_logs_log_stream_name
     AUTH_USERNAME        = random_string.heroku_logs_lambda_basic_auth_username.result # Note: Acceptable security trade-off to store this as cleartext
     AUTH_PASSWORD        = random_string.heroku_logs_lambda_basic_auth_password.result # Note: Acceptable security trade-off to store this as cleartext
   }
@@ -158,7 +169,7 @@ module "heroku_logs_lambda" {
         "firehose:PutRecordBatch"
       ]
       resources = [
-        "arn:aws:firehose:*:*:deliverystream/heroku-logs-delivery"
+        aws_kinesis_firehose_delivery_stream.heroku_logs_stream.arn
       ]
     },
     heroku_logs_cloudwatch = {
