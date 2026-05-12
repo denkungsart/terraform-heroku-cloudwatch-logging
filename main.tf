@@ -492,7 +492,7 @@ resource "aws_cloudwatch_log_metric_filter" "api_401_unauthorized" {
   name           = "${var.app_name}_Api401Unauthorized"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
 
-  pattern = "/api/v1 status=401"
+  pattern = "\"/api/v1\" \"status=401\""
 
   metric_transformation {
     name      = "Api401Unauthorized"
