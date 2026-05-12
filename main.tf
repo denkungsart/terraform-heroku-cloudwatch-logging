@@ -458,7 +458,65 @@ resource "aws_cloudwatch_metric_alarm" "rack_attack_throttle_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 9. Postgres Load Average - "postgres load-avg" excluding specific load averages
+# 9. Rack::Attack Blocklist - Rack::Attack blocked requests
+resource "aws_cloudwatch_log_metric_filter" "rack_attack_blocklist" {
+  name           = "${var.app_name}_RackAttackBlocklist"
+  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
+
+  pattern = "\"Rack::Attack\" blocklist"
+
+  metric_transformation {
+    name      = "RackAttackBlocklist"
+    namespace = "${local.namespace_prefix}/Security"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rack_attack_blocklist_alarm" {
+  alarm_name          = "${var.app_name}_RackAttackBlocklist_Alarm"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.rack_attack_blocklist.metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.rack_attack_blocklist.metric_transformation[0].namespace
+  statistic           = "Sum"
+  threshold           = 10
+  period              = 86400
+  alarm_description   = "Alert when Rack::Attack blocklist logs reach 10 or more in one day."
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+}
+
+# 10. API 401 Unauthorized - repeated unauthorized API requests
+resource "aws_cloudwatch_log_metric_filter" "api_401_unauthorized" {
+  name           = "${var.app_name}_Api401Unauthorized"
+  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
+
+  pattern = "/api/v1 status=401"
+
+  metric_transformation {
+    name      = "Api401Unauthorized"
+    namespace = "${local.namespace_prefix}/Security"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "api_401_unauthorized_alarm" {
+  alarm_name          = "${var.app_name}_Api401Unauthorized_Alarm"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.api_401_unauthorized.metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.api_401_unauthorized.metric_transformation[0].namespace
+  statistic           = "Sum"
+  threshold           = 100
+  period              = 3600
+  alarm_description   = "Alert when API v1 401 responses exceed 100 in one hour."
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+}
+
+# 11. Postgres Load Average - "postgres load-avg" excluding specific load averages
 resource "aws_cloudwatch_log_metric_filter" "postgres_load_avg" {
   name           = "${var.app_name}_PostgresLoadAvg"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -488,7 +546,7 @@ resource "aws_cloudwatch_metric_alarm" "postgres_load_avg_alarm" {
   ok_actions          = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 10. Sentry Error - "ERROR -- sentry:"
+# 12. Sentry Error - "ERROR -- sentry:"
 resource "aws_cloudwatch_log_metric_filter" "sentry_error" {
   name           = "${var.app_name}_SentryError"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -517,7 +575,7 @@ resource "aws_cloudwatch_metric_alarm" "sentry_error_alarm" {
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
 }
 
-# 11. postgresql type_map initialization race condition https://github.com/rails/rails/issues/51780
+# 13. postgresql type_map initialization race condition https://github.com/rails/rails/issues/51780
 resource "aws_cloudwatch_log_metric_filter" "postgres_race_condition" {
   name           = "${var.app_name}_PostgresRaceCondition"
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
