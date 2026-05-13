@@ -63,7 +63,7 @@ test('handler rejects requests without valid Basic Auth before sending to AWS', 
 });
 
 test('handler decodes base64 bodies and writes raw logs to Firehose and processed logs to CloudWatch', async () => {
-  const line = '328 <134>1 2026-05-13T08:16:55.000000+00:00 host heroku router - Error L10 output buffer overflow';
+  const line = '328 <134>1 2026-05-13T08:16:55.000000+00:00 host heroku router - \u001b[1;34mError L10\u001b[0m output buffer overflow';
   const firehoseClient = createAwsClientStub([{ FailedPutCount: 0 }]);
   const logsClient = createAwsClientStub([
     { logStreams: [] },

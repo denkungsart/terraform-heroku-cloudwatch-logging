@@ -13,6 +13,7 @@ import {
   FIREHOSE_MAX_RECORD_BYTES,
   parseHerokuLogTimestamp,
   removePrefix,
+  stripAnsiEscapeCodes,
   validateBasicAuth,
   validateRequiredEnv,
 } from './lambda_heroku_logs_helpers.js';
@@ -47,6 +48,10 @@ test('removePrefix removes Heroku frame and syslog tokens while preserving messa
 
 test('removePrefix leaves short lines unchanged', () => {
   assert.equal(removePrefix('one two'), 'one two');
+});
+
+test('stripAnsiEscapeCodes removes terminal color sequences', () => {
+  assert.equal(stripAnsiEscapeCodes('\u001b[1;34mINFO \u001b[0mpid=2'), 'INFO pid=2');
 });
 
 test('buildFirehoseRecordBatches splits records by Firehose record count limit', () => {
@@ -100,6 +105,15 @@ test('buildCloudWatchLogEvents removes prefixes and sorts by event timestamp', (
       },
     ]
   );
+});
+
+test('buildCloudWatchLogEvents strips ANSI sequences from CloudWatch messages', () => {
+  const line = '328 <134>1 2026-05-13T10:57:11.96214+00:00 host app worker.2 - \u001b[1;34mINFO \u001b[0mpid=2';
+
+  assert.deepEqual(buildCloudWatchLogEvents([line]), [{
+    message: '2026-05-13T10:57:11.96214+00:00 host app worker.2 - INFO pid=2',
+    timestamp: Date.parse('2026-05-13T10:57:11.96214+00:00'),
+  }]);
 });
 
 test('buildCloudWatchLogEventBatches splits records by CloudWatch request byte limit', () => {

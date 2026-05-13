@@ -46,6 +46,10 @@ export function removePrefix(line) {
   return line.replace(/^\S+\s+\S+\s+/, '');
 }
 
+export function stripAnsiEscapeCodes(message) {
+  return message.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+}
+
 export function buildFirehoseRecordBatches(lines) {
   const batches = [];
   let currentBatch = [];
@@ -98,7 +102,7 @@ export function parseHerokuLogTimestamp(line, fallbackTimestamp) {
 export function buildCloudWatchLogEvents(lines, fallbackTimestamp = Date.now()) {
   return lines
     .map(line => ({
-      message: removePrefix(line),
+      message: stripAnsiEscapeCodes(removePrefix(line)),
       timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
     }))
     .sort((first, second) => first.timestamp - second.timestamp);
