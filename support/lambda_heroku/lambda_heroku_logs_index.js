@@ -7,53 +7,18 @@ import {
   CreateLogStreamCommand,
   PutLogEventsCommand,
 } from '@aws-sdk/client-cloudwatch-logs';
+import {
+  buildLogStreamName,
+  chunk,
+  removePrefix,
+  validateBasicAuth,
+  validateRequiredEnv,
+} from './lambda_heroku_logs_helpers.js';
 
 // Initialize the AWS SDK clients (region is taken from process.env.AWS_REGION)
 const firehoseClient = new FirehoseClient({ region: process.env.AWS_REGION });
 const logsClient = new CloudWatchLogsClient({ region: process.env.AWS_REGION });
 const CLOUDWATCH_LOGS_MAX_BATCH_SIZE = 10_000;
-
-function chunk(items, size) {
-  const chunks = [];
-
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-
-  return chunks;
-}
-
-function buildLogStreamName(baseName, requestId) {
-  if (!baseName) {
-    return requestId;
-  }
-
-  return `${baseName}/${requestId}`;
-}
-
-/**
- * Removes the initial formation and syslog header tokens from a log line.
- *
- * For example, for a log line:
- *
- *    "328 <134>1 2025-01-12T20:26:22.585603+00:00 host heroku router - at=info ..."
- *
- * This function will remove the first two tokens ("328" and "<134>1") and return:
- *
- *    "2025-01-12T20:26:22.585603+00:00 host heroku router - at=info ..."
- *
- * @param {string} line - A single log line.
- * @returns {string} - The log line with the prefix removed.
- */
-function removePrefix(line) {
-  const tokens = line.split(/\s+/);
-  // If there are two or fewer tokens, return as is.
-  if (tokens.length <= 2) {
-    return line;
-  }
-  // Return the log line starting from the third token.
-  return tokens.slice(2).join(' ');
-}
 
 /**
  * Sends an array of processed log messages (plain text) to CloudWatch Logs.
@@ -140,34 +105,13 @@ async function sendLogsToFirehose(lines) {
   }
 }
 
-/**
- * Validates Basic Authentication credentials.
- *
- * @param {string} authHeader - The value of the Authorization header.
- * @returns {boolean} - Returns true if authentication is successful, false otherwise.
- */
-function validateBasicAuth(authHeader) {
-  if (!authHeader || !authHeader.startsWith('Basic ')) {
-    return false;
-  }
-
-  // Decode the Base64-encoded credentials
-  const base64Credentials = authHeader.split(' ')[1];
-  const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
-  const [username, password] = credentials.split(':');
-
-  // Retrieve expected credentials from environment variables
-  const expectedUsername = process.env.AUTH_USERNAME;
-  const expectedPassword = process.env.AUTH_PASSWORD;
-
-  // Compare provided credentials with expected credentials
-  return username === expectedUsername && password === expectedPassword;
-}
-
 export const handler = async (event, context) => {
   try {
+    validateRequiredEnv();
+
     // --- Basic Authentication ---
-    const authHeader = event.headers['Authorization'] || event.headers['authorization'];
+    const headers = event.headers || {};
+    const authHeader = headers['Authorization'] || headers['authorization'];
     if (!validateBasicAuth(authHeader)) {
       return {
         statusCode: 401,

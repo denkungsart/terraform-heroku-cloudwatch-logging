@@ -7,5 +7,8 @@
   },
   {
     "path": "lambda_heroku_logs_index.js"
+  },
+  {
+    "path": "lambda_heroku_logs_helpers.js"
   }
 ]
