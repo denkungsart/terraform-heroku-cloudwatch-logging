@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildFirehoseRecordBatches,
   buildLogStreamName,
   chunk,
+  FIREHOSE_MAX_RECORD_BYTES,
   removePrefix,
   validateBasicAuth,
   validateRequiredEnv,
@@ -38,6 +40,29 @@ test('removePrefix removes Heroku frame and syslog tokens while preserving messa
 
 test('removePrefix leaves short lines unchanged', () => {
   assert.equal(removePrefix('one two'), 'one two');
+});
+
+test('buildFirehoseRecordBatches splits records by Firehose record count limit', () => {
+  const batches = buildFirehoseRecordBatches(Array.from({ length: 501 }, (_, index) => `line ${index}`));
+
+  assert.equal(batches.length, 2);
+  assert.equal(batches[0].length, 500);
+  assert.equal(batches[1].length, 1);
+});
+
+test('buildFirehoseRecordBatches splits records by Firehose request byte limit', () => {
+  const batches = buildFirehoseRecordBatches(Array.from({ length: 6 }, () => 'a'.repeat(800_000)));
+
+  assert.equal(batches.length, 2);
+  assert.equal(batches[0].length, 5);
+  assert.equal(batches[1].length, 1);
+});
+
+test('buildFirehoseRecordBatches rejects records above the Firehose record byte limit', () => {
+  assert.throws(
+    () => buildFirehoseRecordBatches(['a'.repeat(FIREHOSE_MAX_RECORD_BYTES)]),
+    /exceeds Firehose record limit/
+  );
 });
 
 test('validateBasicAuth accepts matching credentials', () => {

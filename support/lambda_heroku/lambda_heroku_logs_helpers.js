@@ -9,6 +9,9 @@ const REQUIRED_ENV_VARS = [
   'HEROKU_LOGS_GROUP',
   'HEROKU_LOGS_STREAM',
 ];
+export const FIREHOSE_MAX_BATCH_BYTES = 4 * 1024 * 1024;
+export const FIREHOSE_MAX_RECORD_BYTES = 1_024_000;
+export const FIREHOSE_MAX_RECORDS_PER_BATCH = 500;
 
 export function chunk(items, size) {
   const chunks = [];
@@ -33,6 +36,39 @@ export function buildLogStreamName(baseName, requestId) {
  */
 export function removePrefix(line) {
   return line.replace(/^\S+\s+\S+\s+/, '');
+}
+
+export function buildFirehoseRecordBatches(lines) {
+  const batches = [];
+  let currentBatch = [];
+  let currentBatchBytes = 0;
+
+  for (const line of lines) {
+    const data = `${line}\n`;
+    const byteLength = Buffer.byteLength(data, 'utf8');
+
+    if (byteLength > FIREHOSE_MAX_RECORD_BYTES) {
+      throw new Error(`Heroku log line exceeds Firehose record limit of ${FIREHOSE_MAX_RECORD_BYTES} bytes`);
+    }
+
+    if (
+      currentBatch.length >= FIREHOSE_MAX_RECORDS_PER_BATCH ||
+      currentBatchBytes + byteLength > FIREHOSE_MAX_BATCH_BYTES
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchBytes = 0;
+    }
+
+    currentBatch.push({ Data: data });
+    currentBatchBytes += byteLength;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
 }
 
 function safeEqualString(actual, expected) {

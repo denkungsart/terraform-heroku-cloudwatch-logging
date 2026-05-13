@@ -8,6 +8,7 @@ import {
   PutLogEventsCommand,
 } from '@aws-sdk/client-cloudwatch-logs';
 import {
+  buildFirehoseRecordBatches,
   buildLogStreamName,
   chunk,
   removePrefix,
@@ -19,6 +20,8 @@ import {
 const firehoseClient = new FirehoseClient({ region: process.env.AWS_REGION });
 const logsClient = new CloudWatchLogsClient({ region: process.env.AWS_REGION });
 const CLOUDWATCH_LOGS_MAX_BATCH_SIZE = 10_000;
+const FIREHOSE_MAX_FAILED_RECORD_RETRIES = 3;
+const RETRYABLE_FIREHOSE_FAILURES = new Set(['InternalFailure', 'ServiceUnavailableException']);
 
 /**
  * Sends an array of processed log messages (plain text) to CloudWatch Logs.
@@ -77,31 +80,73 @@ async function sendLogsToCloudWatch(logGroupName, logStreamName, logMessages) {
   }
 }
 
-async function sendLogsToFirehose(lines) {
-  for (const batch of chunk(lines, 500)) {
+function firehoseRetryDelay(attempt) {
+  return 100 * (2 ** attempt);
+}
+
+function sleep(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function failedFirehoseRecords(response, records) {
+  return (response.RequestResponses || [])
+    .map((result, index) => ({ result, record: records[index] }))
+    .filter(({ result }) => result.ErrorCode || result.ErrorMessage);
+}
+
+function summarizeFirehoseFailures(failures) {
+  return failures.map(({ result }) => ({
+    errorCode: result.ErrorCode,
+    errorMessage: result.ErrorMessage,
+  }));
+}
+
+async function putFirehoseBatchWithRetries(records) {
+  let pendingRecords = records;
+
+  for (let attempt = 0; attempt <= FIREHOSE_MAX_FAILED_RECORD_RETRIES; attempt += 1) {
     const firehoseCmd = new PutRecordBatchCommand({
       DeliveryStreamName: process.env.FIREHOSE_STREAM_NAME,
-      Records: batch.map(line => ({ Data: line + '\n' })),
+      Records: pendingRecords,
     });
     const response = await firehoseClient.send(firehoseCmd);
 
     if (!response.FailedPutCount) {
-      continue;
+      return;
     }
 
-    const failedRecords = response.RequestResponses
-      .map((result, index) => ({ result, line: batch[index] }))
-      .filter(({ result }) => result.ErrorCode || result.ErrorMessage);
+    const failedRecords = failedFirehoseRecords(response, pendingRecords);
+    if (failedRecords.length === 0) {
+      console.error('Firehose reported failed records without per-record failure details', {
+        failedPutCount: response.FailedPutCount,
+        attempt: attempt + 1,
+      });
 
-    console.error('Firehose rejected one or more log records', {
-      failedPutCount: response.FailedPutCount,
-      failures: failedRecords.map(({ result }) => ({
-        errorCode: result.ErrorCode,
-        errorMessage: result.ErrorMessage,
-      })),
-    });
+      throw new Error(`Failed to deliver ${response.FailedPutCount} Heroku log record(s) to Firehose`);
+    }
 
-    throw new Error(`Failed to deliver ${response.FailedPutCount} Heroku log record(s) to Firehose`);
+    const retryableRecords = failedRecords
+      .filter(({ result }) => RETRYABLE_FIREHOSE_FAILURES.has(result.ErrorCode))
+      .map(({ record }) => record);
+
+    if (retryableRecords.length !== failedRecords.length || attempt === FIREHOSE_MAX_FAILED_RECORD_RETRIES) {
+      console.error('Firehose rejected one or more log records', {
+        failedPutCount: response.FailedPutCount,
+        attempt: attempt + 1,
+        failures: summarizeFirehoseFailures(failedRecords),
+      });
+
+      throw new Error(`Failed to deliver ${response.FailedPutCount} Heroku log record(s) to Firehose`);
+    }
+
+    pendingRecords = retryableRecords;
+    await sleep(firehoseRetryDelay(attempt));
+  }
+}
+
+async function sendLogsToFirehose(lines) {
+  for (const records of buildFirehoseRecordBatches(lines)) {
+    await putFirehoseBatchWithRetries(records);
   }
 }
 
