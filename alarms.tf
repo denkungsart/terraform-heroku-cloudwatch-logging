@@ -3,219 +3,258 @@
 locals {
   namespace_prefix = "Heroku/${var.app_name}"
   alarm_period     = 60 # Period in seconds
+
+  log_metric_alarms = {
+    used_memory_over_limit = {
+      enabled             = true
+      filter_name         = "${var.app_name}_used_memory_over_limit"
+      pattern             = "used_memory_over_limit"
+      metric_name         = "UsedMemoryOverLimit"
+      metric_namespace    = "${local.namespace_prefix}/Redis"
+      alarm_name          = "${var.app_name}_UsedMemoryOverLimit_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert when Redis memory usage is close to the limit."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+      actions_enabled     = null
+    }
+
+    redis_command_error = {
+      enabled             = true
+      filter_name         = "${var.app_name}_RedisCommandError"
+      pattern             = "?\"Redis::CommandError\" ?\"redis critical\""
+      metric_name         = "RedisCommandError"
+      metric_namespace    = "${local.namespace_prefix}/Redis"
+      alarm_name          = "${var.app_name}_RedisCommandError_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert on Redis command errors."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    redis_load_avg = {
+      enabled             = var.enable_redis_load_avg_alert
+      filter_name         = "${var.app_name}_RedisLoadAvg"
+      pattern             = "redis \"load-avg\" -\"load-avg-1m=0\" -\"load-avg-5m=0\""
+      metric_name         = "RedisLoadAverage"
+      metric_namespace    = "${local.namespace_prefix}/Redis"
+      alarm_name          = "${var.app_name}_RedisLoadAvg_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 10
+      period              = 300
+      description         = "Alert when Redis load average is non-zero repeatedly."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+      actions_enabled     = null
+    }
+
+    # Excluded Heroku router codes: H27 client request interrupted, H28 client
+    # connection idle, H31 misdirected request, H32 TLS certificate mismatch,
+    # H80 maintenance mode, and H99 platform error.
+    heroku_http_error = {
+      enabled             = true
+      filter_name         = "${var.app_name}_HerokuHTTPError"
+      pattern             = "code=H -code=H27 -code=H31 -code=H32 -code=H28 -code=H80 -code=H99"
+      metric_name         = "HerokuHTTPError"
+      metric_namespace    = "${local.namespace_prefix}/HTTP"
+      alarm_name          = "${var.app_name}_HerokuHTTPError_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 5
+      period              = local.alarm_period
+      description         = "Alert on specific Heroku HTTP error codes excluding H27, H31, H32, H28, H80, H99 when there are 5 or more errors in the period."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    heroku_runtime_error = {
+      enabled             = true
+      filter_name         = "${var.app_name}_HerokuRuntimeError"
+      pattern             = "\"Error R\" -R14 -R99 -\"(Exit timeout)\""
+      metric_name         = "HerokuRuntimeError"
+      metric_namespace    = "${local.namespace_prefix}/Runtime"
+      alarm_name          = "${var.app_name}_HerokuRuntimeError_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert on Heroku runtime errors excluding R14 and R99."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    heroku_logplex_l10 = {
+      enabled             = true
+      filter_name         = "${var.app_name}_HerokuLogplexL10"
+      pattern             = "\"Error L10\" \"output buffer overflow\""
+      metric_name         = "HerokuLogplexL10"
+      metric_namespace    = "${local.namespace_prefix}/Logplex"
+      alarm_name          = "${var.app_name}_HerokuLogplexL10_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert when Heroku Logplex reports L10 drain buffer overflow events, indicating dropped log messages."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+      actions_enabled     = null
+    }
+
+    poison_pill = {
+      enabled             = true
+      filter_name         = "${var.app_name}_PoisonPill"
+      pattern             = "\"poison pill\""
+      metric_name         = "PoisonPillKilled"
+      metric_namespace    = "${local.namespace_prefix}/Sidekiq"
+      alarm_name          = "${var.app_name}_PoisonPill_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert when a poison pill is killed by Sidekiq."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    rack_attack_throttle = {
+      enabled             = true
+      filter_name         = "${var.app_name}_RackAttackThrottle"
+      pattern             = "status=429 -agentmon"
+      metric_name         = "RackAttackThrottle"
+      metric_namespace    = "${local.namespace_prefix}/Security"
+      alarm_name          = "${var.app_name}_RackAttackThrottle_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 50
+      period              = 60
+      description         = "Alert on Rack::Attack IP throttling (status=429) excluding agentmon."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = var.enable_rack_attack_throttle_alert
+    }
+
+    rack_attack_blocklist = {
+      enabled             = true
+      filter_name         = "${var.app_name}_RackAttackBlocklist"
+      pattern             = "\"Rack::Attack\" blocklist"
+      metric_name         = "RackAttackBlocklist"
+      metric_namespace    = "${local.namespace_prefix}/Security"
+      alarm_name          = "${var.app_name}_RackAttackBlocklist_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 10
+      period              = 86400
+      description         = "Alert when Rack::Attack blocklist logs reach 10 or more in one day."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    api_401_unauthorized = {
+      enabled             = true
+      filter_name         = "${var.app_name}_Api401Unauthorized"
+      pattern             = "\"/api/v1\" \"status=401\""
+      metric_name         = "Api401Unauthorized"
+      metric_namespace    = "${local.namespace_prefix}/Security"
+      alarm_name          = "${var.app_name}_Api401Unauthorized_Alarm"
+      comparison_operator = "GreaterThanThreshold"
+      threshold           = 100
+      period              = 3600
+      description         = "Alert when API v1 401 responses exceed 100 in one hour."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    postgres_load_avg = {
+      enabled             = true
+      filter_name         = "${var.app_name}_PostgresLoadAvg"
+      pattern             = "postgres \"sample#load-avg\" -\"sample#load-avg-1m=0\" -\"sample#load-avg-5m=0\""
+      metric_name         = "PostgresLoadAverage"
+      metric_namespace    = "${local.namespace_prefix}/Postgres"
+      alarm_name          = "${var.app_name}_PostgresLoadAvg_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 10
+      period              = 300
+      description         = "Alert when Postgres load average exceeds thresholds."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+      actions_enabled     = null
+    }
+
+    sentry_error = {
+      enabled             = true
+      filter_name         = "${var.app_name}_SentryError"
+      pattern             = "\"ERROR -- sentry:\""
+      metric_name         = "SentryError"
+      metric_namespace    = "${local.namespace_prefix}/Sentry"
+      alarm_name          = "${var.app_name}_SentryError_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert when a Sentry error is detected in the logs."
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+
+    postgres_race_condition = {
+      enabled             = true
+      filter_name         = "${var.app_name}_PostgresRaceCondition"
+      pattern             = "\"undefined method 'key?' for nil\""
+      metric_name         = "PostgresRaceCondition"
+      metric_namespace    = "${local.namespace_prefix}/PostgresRaceCondition"
+      alarm_name          = "${var.app_name}_PostgresRaceCondition_Alarm"
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      threshold           = 1
+      period              = local.alarm_period
+      description         = "Alert when a possible race condition in PostgreSQL type_map initialization is detected."
+      alarm_actions       = [aws_sns_topic.pagerduty_alerts.arn]
+      ok_actions          = null
+      actions_enabled     = null
+    }
+  }
+
+  enabled_log_metric_alarms = {
+    for key, alarm in local.log_metric_alarms : key => alarm if alarm.enabled
+  }
 }
 
-# 1. used_memory_over_limit - Redis memory close to the limit
-resource "aws_cloudwatch_log_metric_filter" "used_memory_over_limit" {
-  name           = "${var.app_name}_used_memory_over_limit"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
+resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
+  for_each = local.enabled_log_metric_alarms
 
-  pattern = "used_memory_over_limit"
+  name           = each.value.filter_name
+  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
+  pattern        = each.value.pattern
 
   metric_transformation {
-    name      = "UsedMemoryOverLimit"
-    namespace = "${local.namespace_prefix}/Redis"
+    name      = each.value.metric_name
+    namespace = each.value.metric_namespace
     value     = "1"
     unit      = "Count"
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "used_memory_over_limit_alarm" {
-  alarm_name          = "${var.app_name}_UsedMemoryOverLimit_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
+resource "aws_cloudwatch_metric_alarm" "log_alarm" {
+  for_each = local.enabled_log_metric_alarms
+
+  alarm_name          = each.value.alarm_name
+  comparison_operator = each.value.comparison_operator
   evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.used_memory_over_limit.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.used_memory_over_limit.metric_transformation[0].namespace
+  metric_name         = aws_cloudwatch_log_metric_filter.log_alarm[each.key].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.log_alarm[each.key].metric_transformation[0].namespace
   statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert when Redis memory usage is close to the limit."
+  threshold           = each.value.threshold
+  period              = each.value.period
+  alarm_description   = each.value.description
+  actions_enabled     = each.value.actions_enabled
   treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+  alarm_actions       = each.value.alarm_actions
+  ok_actions          = each.value.ok_actions
 }
 
-# 2. Redis::CommandError - Redis Error
-resource "aws_cloudwatch_log_metric_filter" "redis_command_error" {
-  name           = "${var.app_name}_RedisCommandError"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "?\"Redis::CommandError\" ?\"redis critical\""
-
-  metric_transformation {
-    name      = "RedisCommandError"
-    namespace = "${local.namespace_prefix}/Redis"
-    value     = "1"
-    unit      = "Count"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "redis_command_error_alarm" {
-  alarm_name          = "${var.app_name}_RedisCommandError_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.redis_command_error.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.redis_command_error.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert on Redis command errors."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-}
-
-# 3. Redis Load Average - "redis load-avg" excluding zero load averages
-resource "aws_cloudwatch_log_metric_filter" "redis_load_avg" {
-  count = var.enable_redis_load_avg_alert ? 1 : 0
-
-  name           = "${var.app_name}_RedisLoadAvg"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "redis \"load-avg\" -\"load-avg-1m=0\" -\"load-avg-5m=0\""
-
-  metric_transformation {
-    name      = "RedisLoadAverage"
-    namespace = "${local.namespace_prefix}/Redis"
-    value     = "1"
-    unit      = "Count"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "redis_load_avg_alarm" {
-  count = var.enable_redis_load_avg_alert ? 1 : 0
-
-  alarm_name          = "${var.app_name}_RedisLoadAvg_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.redis_load_avg[0].metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.redis_load_avg[0].metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 10
-  period              = 300
-  alarm_description   = "Alert when Redis load average is non-zero repeatedly."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
-}
-
-# 4. Heroku HTTP error - code=H* excluding specific codes
-resource "aws_cloudwatch_log_metric_filter" "heroku_http_error" {
-  name           = "${var.app_name}_HerokuHTTPError"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "code=H -code=H27 -code=H31 -code=H32 -code=H28 -code=H80 -code=H99"
-
-  metric_transformation {
-    name      = "HerokuHTTPError"
-    namespace = "${local.namespace_prefix}/HTTP"
-    value     = "1"
-    unit      = "Count"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "heroku_http_error_alarm" {
-  alarm_name          = "${var.app_name}_HerokuHTTPError_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.heroku_http_error.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.heroku_http_error.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 5
-  period              = local.alarm_period
-  alarm_description   = "Alert on specific Heroku HTTP error codes excluding H27, H31, H32, H28, H80, H99 when there are 5 or more errors in the period."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-}
-
-# 5. Heroku Runtime Error - "Error R" excluding R14
-resource "aws_cloudwatch_log_metric_filter" "heroku_runtime_error" {
-  name           = "${var.app_name}_HerokuRuntimeError"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"Error R\" -R14 -R99 -\"(Exit timeout)\""
-
-  metric_transformation {
-    name      = "HerokuRuntimeError"
-    namespace = "${local.namespace_prefix}/Runtime"
-    value     = "1"
-    unit      = "Count"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "heroku_runtime_error_alarm" {
-  alarm_name          = "${var.app_name}_HerokuRuntimeError_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.heroku_runtime_error.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.heroku_runtime_error.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert on Heroku runtime errors excluding R14 and R99."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-}
-
-# 6. Heroku Logplex Drain Buffer Overflow - dropped log messages
-resource "aws_cloudwatch_log_metric_filter" "heroku_logplex_l10" {
-  name           = "${var.app_name}_HerokuLogplexL10"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"Error L10\" \"output buffer overflow\""
-
-  metric_transformation {
-    name      = "HerokuLogplexL10"
-    namespace = "${local.namespace_prefix}/Logplex"
-    value     = "1"
-    unit      = "Count"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "heroku_logplex_l10_alarm" {
-  alarm_name          = "${var.app_name}_HerokuLogplexL10_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.heroku_logplex_l10.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.heroku_logplex_l10.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert when Heroku Logplex reports L10 drain buffer overflow events, indicating dropped log messages."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
-}
-
-# 7. Poison Pill - Poison pill killed by Sidekiq
-resource "aws_cloudwatch_log_metric_filter" "poison_pill" {
-  name           = "${var.app_name}_PoisonPill"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"poison pill\""
-
-  metric_transformation {
-    name      = "PoisonPillKilled"
-    namespace = "${local.namespace_prefix}/Sidekiq"
-    value     = "1"
-    unit      = "Count"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "poison_pill_alarm" {
-  alarm_name          = "${var.app_name}_PoisonPill_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.poison_pill.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.poison_pill.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert when a poison pill is killed by Sidekiq."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-}
-
-# 8. Sidekiq Queue Latency - monitor queue latency from custom metric
 resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
   alarm_name          = "${var.app_name}_SidekiqQueueLatency_Alarm"
   comparison_operator = "GreaterThanThreshold"
@@ -231,179 +270,132 @@ resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
   treat_missing_data  = "notBreaching"
 }
 
-# 9. Rack::Attack Throttling - status=429 excluding agentmon
-resource "aws_cloudwatch_log_metric_filter" "rack_attack_throttle" {
-  name           = "${var.app_name}_RackAttackThrottle"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "status=429 -agentmon"
-
-  metric_transformation {
-    name      = "RackAttackThrottle"
-    namespace = "${local.namespace_prefix}/Security"
-    value     = "1"
-    unit      = "Count"
-  }
+moved {
+  from = aws_cloudwatch_log_metric_filter.used_memory_over_limit
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["used_memory_over_limit"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "rack_attack_throttle_alarm" {
-  alarm_name          = "${var.app_name}_RackAttackThrottle_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.rack_attack_throttle.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.rack_attack_throttle.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 50
-  period              = 60
-  alarm_description   = "Alert on Rack::Attack IP throttling (status=429) excluding agentmon."
-  actions_enabled     = var.enable_rack_attack_throttle_alert
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+moved {
+  from = aws_cloudwatch_log_metric_filter.redis_command_error
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["redis_command_error"]
 }
 
-# 10. Rack::Attack Blocklist - Rack::Attack blocked requests
-resource "aws_cloudwatch_log_metric_filter" "rack_attack_blocklist" {
-  name           = "${var.app_name}_RackAttackBlocklist"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"Rack::Attack\" blocklist"
-
-  metric_transformation {
-    name      = "RackAttackBlocklist"
-    namespace = "${local.namespace_prefix}/Security"
-    value     = "1"
-    unit      = "Count"
-  }
+moved {
+  from = aws_cloudwatch_log_metric_filter.redis_load_avg[0]
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["redis_load_avg"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "rack_attack_blocklist_alarm" {
-  alarm_name          = "${var.app_name}_RackAttackBlocklist_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.rack_attack_blocklist.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.rack_attack_blocklist.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 10
-  period              = 86400
-  alarm_description   = "Alert when Rack::Attack blocklist logs reach 10 or more in one day."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+moved {
+  from = aws_cloudwatch_log_metric_filter.heroku_http_error
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["heroku_http_error"]
 }
 
-# 11. API 401 Unauthorized - repeated unauthorized API requests
-resource "aws_cloudwatch_log_metric_filter" "api_401_unauthorized" {
-  name           = "${var.app_name}_Api401Unauthorized"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"/api/v1\" \"status=401\""
-
-  metric_transformation {
-    name      = "Api401Unauthorized"
-    namespace = "${local.namespace_prefix}/Security"
-    value     = "1"
-    unit      = "Count"
-  }
+moved {
+  from = aws_cloudwatch_log_metric_filter.heroku_runtime_error
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["heroku_runtime_error"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "api_401_unauthorized_alarm" {
-  alarm_name          = "${var.app_name}_Api401Unauthorized_Alarm"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.api_401_unauthorized.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.api_401_unauthorized.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 100
-  period              = 3600
-  alarm_description   = "Alert when API v1 401 responses exceed 100 in one hour."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+moved {
+  from = aws_cloudwatch_log_metric_filter.heroku_logplex_l10
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["heroku_logplex_l10"]
 }
 
-# 12. Postgres Load Average - "postgres load-avg" excluding specific load averages
-resource "aws_cloudwatch_log_metric_filter" "postgres_load_avg" {
-  name           = "${var.app_name}_PostgresLoadAvg"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "postgres \"sample#load-avg\" -\"sample#load-avg-1m=0\" -\"sample#load-avg-5m=0\""
-
-  metric_transformation {
-    name      = "PostgresLoadAverage"
-    namespace = "${local.namespace_prefix}/Postgres"
-    value     = "1"
-    unit      = "Count"
-  }
+moved {
+  from = aws_cloudwatch_log_metric_filter.poison_pill
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["poison_pill"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "postgres_load_avg_alarm" {
-  alarm_name          = "${var.app_name}_PostgresLoadAvg_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.postgres_load_avg.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.postgres_load_avg.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 10
-  period              = 300
-  alarm_description   = "Alert when Postgres load average exceeds thresholds."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+moved {
+  from = aws_cloudwatch_log_metric_filter.rack_attack_throttle
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["rack_attack_throttle"]
 }
 
-# 13. Sentry Error - "ERROR -- sentry:"
-resource "aws_cloudwatch_log_metric_filter" "sentry_error" {
-  name           = "${var.app_name}_SentryError"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"ERROR -- sentry:\""
-
-  metric_transformation {
-    name      = "SentryError"
-    namespace = "${local.namespace_prefix}/Sentry"
-    value     = "1"
-    unit      = "Count"
-  }
+moved {
+  from = aws_cloudwatch_log_metric_filter.rack_attack_blocklist
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["rack_attack_blocklist"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "sentry_error_alarm" {
-  alarm_name          = "${var.app_name}_SentryError_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.sentry_error.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.sentry_error.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert when a Sentry error is detected in the logs."
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+moved {
+  from = aws_cloudwatch_log_metric_filter.api_401_unauthorized
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["api_401_unauthorized"]
 }
 
-# 14. postgresql type_map initialization race condition https://github.com/rails/rails/issues/51780
-resource "aws_cloudwatch_log_metric_filter" "postgres_race_condition" {
-  name           = "${var.app_name}_PostgresRaceCondition"
-  log_group_name = aws_cloudwatch_log_group.heroku_logs.name
-
-  pattern = "\"undefined method 'key?' for nil\""
-
-  metric_transformation {
-    name      = "PostgresRaceCondition"
-    namespace = "${local.namespace_prefix}/PostgresRaceCondition"
-    value     = "1"
-    unit      = "Count"
-  }
+moved {
+  from = aws_cloudwatch_log_metric_filter.postgres_load_avg
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["postgres_load_avg"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "postgres_race_condition_alarm" {
-  alarm_name          = "${var.app_name}_PostgresRaceCondition_Alarm"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = aws_cloudwatch_log_metric_filter.postgres_race_condition.metric_transformation[0].name
-  namespace           = aws_cloudwatch_log_metric_filter.postgres_race_condition.metric_transformation[0].namespace
-  statistic           = "Sum"
-  threshold           = 1
-  period              = local.alarm_period
-  alarm_description   = "Alert when a possible race condition in PostgreSQL type_map initialization is detected."
-  treat_missing_data  = "notBreaching"
+moved {
+  from = aws_cloudwatch_log_metric_filter.sentry_error
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["sentry_error"]
+}
 
-  alarm_actions = [aws_sns_topic.pagerduty_alerts.arn]
+moved {
+  from = aws_cloudwatch_log_metric_filter.postgres_race_condition
+  to   = aws_cloudwatch_log_metric_filter.log_alarm["postgres_race_condition"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.used_memory_over_limit_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["used_memory_over_limit"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.redis_command_error_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["redis_command_error"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.redis_load_avg_alarm[0]
+  to   = aws_cloudwatch_metric_alarm.log_alarm["redis_load_avg"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.heroku_http_error_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["heroku_http_error"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.heroku_runtime_error_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["heroku_runtime_error"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.heroku_logplex_l10_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["heroku_logplex_l10"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.poison_pill_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["poison_pill"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.rack_attack_throttle_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["rack_attack_throttle"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.rack_attack_blocklist_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["rack_attack_blocklist"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.api_401_unauthorized_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["api_401_unauthorized"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.postgres_load_avg_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["postgres_load_avg"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.sentry_error_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["sentry_error"]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.postgres_race_condition_alarm
+  to   = aws_cloudwatch_metric_alarm.log_alarm["postgres_race_condition"]
 }
