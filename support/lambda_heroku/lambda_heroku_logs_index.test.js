@@ -190,3 +190,41 @@ test('handler returns 500 and skips CloudWatch when Firehose reports non-retryab
   assert.equal(logsClient.calls.length, 0);
   assert.equal(logger.errors.length, 2);
 });
+
+test('handler caches confirmed CloudWatch log streams across warm invocations', async () => {
+  const line = '328 <134>1 2026-05-13T08:16:55.000000+00:00 host heroku router - cached';
+  const firehoseClient = createAwsClientStub([
+    { FailedPutCount: 0 },
+    { FailedPutCount: 0 },
+  ]);
+  const logsClient = createAwsClientStub([
+    { logStreams: [] },
+    {},
+    {},
+    {},
+  ]);
+  const handler = createHandler({
+    firehoseClient,
+    logsClient,
+    env: ENV,
+    logger: createLoggerStub(),
+    now: () => new Date('2026-05-13T12:00:00Z'),
+  });
+
+  const event = {
+    headers: { authorization: basicAuth() },
+    body: `${line}\n`,
+  };
+
+  assert.equal((await handler(event)).statusCode, 200);
+  assert.equal((await handler(event)).statusCode, 200);
+  assert.deepEqual(
+    logsClient.calls.map(command => command.constructor.name),
+    [
+      'DescribeLogStreamsCommand',
+      'CreateLogStreamCommand',
+      'PutLogEventsCommand',
+      'PutLogEventsCommand',
+    ]
+  );
+});

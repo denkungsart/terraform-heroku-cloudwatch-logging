@@ -50,6 +50,7 @@ export function createHandler({
   logger = console,
   now = () => new Date(),
   sleepFn = sleep,
+  knownLogStreams = new Set(),
 } = {}) {
   /**
    * Sends an array of processed log messages (plain text) to CloudWatch Logs.
@@ -59,6 +60,12 @@ export function createHandler({
    * @param {string[]} logMessages - Array of raw log messages.
    */
   async function ensureLogStream(logGroupName, logStreamName) {
+    const cacheKey = `${logGroupName}:${logStreamName}`;
+
+    if (knownLogStreams.has(cacheKey)) {
+      return;
+    }
+
     try {
       const describeResp = await logsClient.send(
         new DescribeLogStreamsCommand({
@@ -69,14 +76,17 @@ export function createHandler({
       const stream = (describeResp.logStreams || []).find(ls => ls.logStreamName === logStreamName);
 
       if (stream) {
+        knownLogStreams.add(cacheKey);
         return;
       }
 
       await logsClient.send(
         new CreateLogStreamCommand({ logGroupName, logStreamName })
       );
+      knownLogStreams.add(cacheKey);
     } catch (error) {
       if (error.name === 'ResourceAlreadyExistsException') {
+        knownLogStreams.add(cacheKey);
         return;
       }
 
