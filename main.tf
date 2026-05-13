@@ -149,15 +149,10 @@ module "heroku_logs_lambda" {
   timeout       = 10
   architectures = ["arm64"]
 
-  # Enable Lambda Function URL
+  # Heroku drains cannot sign AWS_IAM requests, so the public Function URL uses
+  # NONE here and the handler enforces Basic Auth from the drain URL credentials.
   create_lambda_function_url = true
-
-  authorization_type = "NONE"
-  cors = {
-    allow_origins = ["https://${var.app_fqdn}"]
-    allow_methods = ["POST"]
-    allow_headers = ["content-type", "authorization"]
-  }
+  authorization_type         = "NONE"
 
   attach_cloudwatch_logs_policy = false # custom policy attached below
   attach_policy_json            = false
