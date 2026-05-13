@@ -12,6 +12,12 @@ const REQUIRED_ENV_VARS = [
 export const FIREHOSE_MAX_BATCH_BYTES = 4 * 1024 * 1024;
 export const FIREHOSE_MAX_RECORD_BYTES = 1_024_000;
 export const FIREHOSE_MAX_RECORDS_PER_BATCH = 500;
+export const CLOUDWATCH_LOGS_EVENT_OVERHEAD_BYTES = 26;
+export const CLOUDWATCH_LOGS_MAX_BATCH_BYTES = 1_048_576;
+export const CLOUDWATCH_LOGS_MAX_BATCH_SPAN_MS = 24 * 60 * 60 * 1000;
+export const CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES =
+  CLOUDWATCH_LOGS_MAX_BATCH_BYTES - CLOUDWATCH_LOGS_EVENT_OVERHEAD_BYTES;
+export const CLOUDWATCH_LOGS_MAX_EVENTS_PER_BATCH = 10_000;
 
 export function chunk(items, size) {
   const chunks = [];
@@ -23,12 +29,14 @@ export function chunk(items, size) {
   return chunks;
 }
 
-export function buildLogStreamName(baseName, requestId) {
+export function buildLogStreamName(baseName, date = new Date()) {
+  const day = date.toISOString().slice(0, 10);
+
   if (!baseName) {
-    return requestId;
+    return day;
   }
 
-  return `${baseName}/${requestId}`;
+  return `${baseName}/${day}`;
 }
 
 /**
@@ -62,6 +70,80 @@ export function buildFirehoseRecordBatches(lines) {
 
     currentBatch.push({ Data: data });
     currentBatchBytes += byteLength;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
+export function parseHerokuLogTimestamp(line, fallbackTimestamp) {
+  const match = line.match(/^\S+\s+\S+\s+(\S+)/);
+
+  if (!match) {
+    return fallbackTimestamp;
+  }
+
+  const timestamp = Date.parse(match[1]);
+
+  if (!Number.isFinite(timestamp)) {
+    return fallbackTimestamp;
+  }
+
+  return timestamp;
+}
+
+export function buildCloudWatchLogEvents(lines, fallbackTimestamp = Date.now()) {
+  return lines
+    .map(line => ({
+      message: removePrefix(line),
+      timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
+    }))
+    .sort((first, second) => first.timestamp - second.timestamp);
+}
+
+function cloudWatchLogEventSize(event) {
+  return Buffer.byteLength(event.message, 'utf8') + CLOUDWATCH_LOGS_EVENT_OVERHEAD_BYTES;
+}
+
+export function buildCloudWatchLogEventBatches(events) {
+  const batches = [];
+  let currentBatch = [];
+  let currentBatchBytes = 0;
+  let currentBatchStartTimestamp = null;
+
+  for (const event of events) {
+    const messageBytes = Buffer.byteLength(event.message, 'utf8');
+    const eventBytes = messageBytes + CLOUDWATCH_LOGS_EVENT_OVERHEAD_BYTES;
+
+    if (messageBytes > CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES) {
+      throw new Error(
+        `CloudWatch log event exceeds message limit of ${CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES} bytes`
+      );
+    }
+
+    if (
+      currentBatch.length > 0 &&
+      (
+        currentBatch.length >= CLOUDWATCH_LOGS_MAX_EVENTS_PER_BATCH ||
+        currentBatchBytes + eventBytes > CLOUDWATCH_LOGS_MAX_BATCH_BYTES ||
+        event.timestamp - currentBatchStartTimestamp > CLOUDWATCH_LOGS_MAX_BATCH_SPAN_MS
+      )
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchBytes = 0;
+      currentBatchStartTimestamp = null;
+    }
+
+    if (currentBatchStartTimestamp === null) {
+      currentBatchStartTimestamp = event.timestamp;
+    }
+
+    currentBatch.push(event);
+    currentBatchBytes += cloudWatchLogEventSize(event);
   }
 
   if (currentBatch.length > 0) {

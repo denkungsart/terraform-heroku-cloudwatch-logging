@@ -8,10 +8,10 @@ import {
   PutLogEventsCommand,
 } from '@aws-sdk/client-cloudwatch-logs';
 import {
+  buildCloudWatchLogEventBatches,
+  buildCloudWatchLogEvents,
   buildFirehoseRecordBatches,
   buildLogStreamName,
-  chunk,
-  removePrefix,
   validateBasicAuth,
   validateRequiredEnv,
 } from './lambda_heroku_logs_helpers.js';
@@ -19,7 +19,6 @@ import {
 // Initialize the AWS SDK clients (region is taken from process.env.AWS_REGION)
 const firehoseClient = new FirehoseClient({ region: process.env.AWS_REGION });
 const logsClient = new CloudWatchLogsClient({ region: process.env.AWS_REGION });
-const CLOUDWATCH_LOGS_MAX_BATCH_SIZE = 10_000;
 const FIREHOSE_MAX_FAILED_RECORD_RETRIES = 3;
 const RETRYABLE_FIREHOSE_FAILURES = new Set(['InternalFailure', 'ServiceUnavailableException']);
 
@@ -60,13 +59,9 @@ async function ensureLogStream(logGroupName, logStreamName) {
 async function sendLogsToCloudWatch(logGroupName, logStreamName, logMessages) {
   await ensureLogStream(logGroupName, logStreamName);
 
-  // Process each log message by removing the first two tokens.
-  const events = logMessages.map((msg, index) => ({
-    message: removePrefix(msg),
-    timestamp: Date.now() + index,
-  }));
+  const events = buildCloudWatchLogEvents(logMessages);
 
-  for (const batch of chunk(events, CLOUDWATCH_LOGS_MAX_BATCH_SIZE)) {
+  for (const batch of buildCloudWatchLogEventBatches(events)) {
     try {
       await logsClient.send(new PutLogEventsCommand({
         logGroupName,
@@ -180,7 +175,7 @@ export const handler = async (event, context) => {
       // --- Send processed (prefix removed) logs to CloudWatch Logs ---
       await sendLogsToCloudWatch(
         process.env.HEROKU_LOGS_GROUP,   // e.g., "/heroku/logs"
-        buildLogStreamName(process.env.HEROKU_LOGS_STREAM, context.awsRequestId),
+        buildLogStreamName(process.env.HEROKU_LOGS_STREAM),
         lines
       );
     }
