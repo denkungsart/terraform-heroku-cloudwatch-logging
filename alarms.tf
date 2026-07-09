@@ -16,7 +16,7 @@ locals {
       threshold           = 1
       period              = local.alarm_period
       description         = "Alert when Redis memory usage is close to the limit."
-      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+      alarm_actions       = [aws_sns_topic.heroku_alerts.arn, aws_sns_topic.pagerduty_alerts.arn]
       ok_actions          = [aws_sns_topic.heroku_alerts.arn]
       actions_enabled     = null
     }
