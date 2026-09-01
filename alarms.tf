@@ -255,6 +255,8 @@ resource "aws_cloudwatch_metric_alarm" "log_alarm" {
   ok_actions          = each.value.ok_actions
 }
 
+# Keep both namespace variants during the gradual Rails rollout. Remove the
+# canonical-host alarm after all installations publish under HEROKU_APP_NAME.
 resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
   alarm_name          = "${var.app_name}_SidekiqQueueLatency_Alarm"
   comparison_operator = "GreaterThanThreshold"
@@ -265,6 +267,21 @@ resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
   threshold           = 60
   period              = 600
   alarm_description   = "Alert when Sidekiq queue latency exceeds 60 seconds."
+  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+  treat_missing_data  = "notBreaching"
+}
+
+resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_app_name_alarm" {
+  alarm_name          = "${var.app_name}_SidekiqQueueLatencyAppName_Alarm"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "QueueLatency"
+  namespace           = "${var.app_name}/Sidekiq"
+  statistic           = "Maximum"
+  threshold           = 60
+  period              = 600
+  alarm_description   = "Alert when Sidekiq queue latency exceeds 60 seconds in the Heroku app name namespace."
   alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
   ok_actions          = [aws_sns_topic.heroku_alerts.arn]
   treat_missing_data  = "notBreaching"
