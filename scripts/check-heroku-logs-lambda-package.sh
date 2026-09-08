@@ -83,7 +83,7 @@ subprocess.run(
 zip_path = os.path.join(repo_root, build_info["filename"])
 with zipfile.ZipFile(zip_path) as archive:
     names = set(archive.namelist())
-    required_files = {"package.json", "lambda_heroku_logs_index.js"}
+    required_files = {"package.json", "lambda_heroku_logs_index.js", "lambda_heroku_logs_helpers.js"}
     missing = sorted(required_files - names)
     if missing:
         raise SystemExit(f"Lambda package is missing required runtime files: {', '.join(missing)}")
