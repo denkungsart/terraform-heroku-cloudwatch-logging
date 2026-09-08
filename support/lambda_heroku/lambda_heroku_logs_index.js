@@ -22,6 +22,15 @@ const defaultLogsClient = new CloudWatchLogsClient({ region: process.env.AWS_REG
 const FIREHOSE_MAX_FAILED_RECORD_RETRIES = 3;
 const RETRYABLE_FIREHOSE_FAILURES = new Set(['InternalFailure', 'ServiceUnavailableException']);
 
+// Logplex requires an empty response and does not support chunked transfer encoding.
+function drainResponse(statusCode, headers = {}) {
+  return {
+    statusCode,
+    headers: { ...headers, 'Content-Length': '0' },
+    body: '',
+  };
+}
+
 function firehoseRetryDelay(attempt) {
   return 100 * (2 ** attempt);
 }
@@ -171,11 +180,8 @@ export function createHandler({
       const headers = event.headers || {};
       const authHeader = headers['Authorization'] || headers['authorization'];
       if (!validateBasicAuth(authHeader, env)) {
-        return {
-          statusCode: 401,
-          headers: { 'WWW-Authenticate': 'Basic realm="Heroku Logs"' },
-          body: JSON.stringify({ message: 'Unauthorized: Invalid credentials' }),
-        };
+        logger.error('Unauthorized Heroku log drain request');
+        return drainResponse(401, { 'WWW-Authenticate': 'Basic realm="Heroku Logs"' });
       }
 
       // --- Base64 Decoding ---
@@ -198,16 +204,10 @@ export function createHandler({
         );
       }
 
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ status: "OK" }),
-      };
+      return drainResponse(200);
     } catch (error) {
       logger.error('Error in Lambda:', error);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: error.message }),
-      };
+      return drainResponse(500);
     }
   };
 }
