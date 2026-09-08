@@ -44,7 +44,42 @@ function createLoggerStub() {
   };
 }
 
-test('handler rejects requests without valid Basic Auth before sending to AWS', async () => {
+function assertDrainResponse(response, statusCode) {
+  assert.deepEqual(response, {
+    statusCode,
+    headers: {
+      ...(statusCode === 401 ? { 'WWW-Authenticate': 'Basic realm="Heroku Logs"' } : {}),
+      'Content-Length': '0',
+    },
+    body: '',
+  });
+}
+
+test('handler rejects requests without valid Basic Auth before sending to AWS', async t => {
+  const cases = [
+    { name: 'missing', authorization: undefined },
+    { name: 'malformed', authorization: 'Bearer invalid' },
+    { name: 'incorrect', authorization: basicAuth('wrong', 'password') },
+  ];
+
+  for (const { name, authorization } of cases) {
+    await t.test(name, async () => {
+      const firehoseClient = createAwsClientStub();
+      const logsClient = createAwsClientStub();
+      const logger = createLoggerStub();
+      const handler = createHandler({ firehoseClient, logsClient, env: ENV, logger });
+
+      const response = await handler({ headers: { authorization }, body: 'line\n' });
+
+      assertDrainResponse(response, 401);
+      assert.equal(firehoseClient.calls.length, 0);
+      assert.equal(logsClient.calls.length, 0);
+      assert.deepEqual(logger.errors, [['Unauthorized Heroku log drain request']]);
+    });
+  }
+});
+
+test('handler acknowledges an authenticated empty request without AWS writes', async () => {
   const firehoseClient = createAwsClientStub();
   const logsClient = createAwsClientStub();
   const handler = createHandler({
@@ -54,10 +89,9 @@ test('handler rejects requests without valid Basic Auth before sending to AWS', 
     logger: createLoggerStub(),
   });
 
-  const response = await handler({ headers: {}, body: 'line\n' });
+  const response = await handler({ headers: { authorization: basicAuth() }, body: '' });
 
-  assert.equal(response.statusCode, 401);
-  assert.deepEqual(response.headers, { 'WWW-Authenticate': 'Basic realm="Heroku Logs"' });
+  assertDrainResponse(response, 200);
   assert.equal(firehoseClient.calls.length, 0);
   assert.equal(logsClient.calls.length, 0);
 });
@@ -84,7 +118,7 @@ test('handler decodes base64 bodies and writes raw logs to Firehose and processe
     body: Buffer.from(`${line}\n`, 'utf8').toString('base64'),
   });
 
-  assert.equal(response.statusCode, 200);
+  assertDrainResponse(response, 200);
   assert.equal(firehoseClient.calls.length, 1);
   assert.equal(firehoseClient.calls[0].constructor.name, 'PutRecordBatchCommand');
   assert.deepEqual(firehoseClient.calls[0].input, {
@@ -145,7 +179,7 @@ test('handler retries only failed retryable Firehose records before continuing t
     body: `${firstLine}\n${secondLine}\n`,
   });
 
-  assert.equal(response.statusCode, 200);
+  assertDrainResponse(response, 200);
   assert.deepEqual(sleepDelays, [100]);
   assert.equal(firehoseClient.calls.length, 2);
   assert.deepEqual(
@@ -185,8 +219,8 @@ test('handler returns 500 and skips CloudWatch when Firehose reports non-retryab
     body: `${line}\n`,
   });
 
-  assert.equal(response.statusCode, 500);
-  assert.match(JSON.parse(response.body).error, /Failed to deliver 1 Heroku log record/);
+  assertDrainResponse(response, 500);
+  assert.match(logger.errors.at(-1)[1].message, /Failed to deliver 1 Heroku log record/);
   assert.equal(logsClient.calls.length, 0);
   assert.equal(logger.errors.length, 2);
 });
@@ -216,8 +250,8 @@ test('handler caches confirmed CloudWatch log streams across warm invocations', 
     body: `${line}\n`,
   };
 
-  assert.equal((await handler(event)).statusCode, 200);
-  assert.equal((await handler(event)).statusCode, 200);
+  assertDrainResponse(await handler(event), 200);
+  assertDrainResponse(await handler(event), 200);
   assert.deepEqual(
     logsClient.calls.map(command => command.constructor.name),
     [
@@ -227,4 +261,85 @@ test('handler caches confirmed CloudWatch log streams across warm invocations', 
       'PutLogEventsCommand',
     ]
   );
+});
+
+test('handler keeps configuration and AWS failure diagnostics in logs', async t => {
+  const failure = new Error('Downstream delivery unavailable');
+  const scenarios = [
+    { name: 'missing configuration', env: {}, firehoseCalls: 0, logsCalls: 0, message: /Missing required environment/ },
+    { name: 'Firehose request failure', firehoseResponses: [failure], firehoseCalls: 1, logsCalls: 0 },
+    { name: 'CloudWatch stream lookup failure', logsResponses: [failure], firehoseCalls: 1, logsCalls: 1 },
+    { name: 'CloudWatch stream creation failure', logsResponses: [{ logStreams: [] }, failure], firehoseCalls: 1, logsCalls: 2 },
+    { name: 'CloudWatch delivery failure', logsResponses: [{ logStreams: [] }, {}, failure], firehoseCalls: 1, logsCalls: 3 },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const firehoseClient = createAwsClientStub(scenario.firehoseResponses);
+      const logsClient = createAwsClientStub(scenario.logsResponses);
+      const logger = createLoggerStub();
+      const handler = createHandler({ firehoseClient, logsClient, env: scenario.env || ENV, logger });
+
+      const response = await handler({ headers: { authorization: basicAuth() }, body: 'line\n' });
+
+      assertDrainResponse(response, 500);
+      assert.equal(firehoseClient.calls.length, scenario.firehoseCalls);
+      assert.equal(logsClient.calls.length, scenario.logsCalls);
+      assert.match(logger.errors.at(-1)[1].message, scenario.message || /Downstream delivery unavailable/);
+    });
+  }
+});
+
+test('handler returns an empty 500 after exhausting Firehose retries', async () => {
+  const firehoseClient = createAwsClientStub(Array.from({ length: 4 }, () => ({
+    FailedPutCount: 1,
+    RequestResponses: [{ ErrorCode: 'ServiceUnavailableException', ErrorMessage: 'try again' }],
+  })));
+  const logsClient = createAwsClientStub();
+  const logger = createLoggerStub();
+  const sleepDelays = [];
+  const handler = createHandler({
+    firehoseClient,
+    logsClient,
+    env: ENV,
+    logger,
+    sleepFn: async delay => { sleepDelays.push(delay); },
+  });
+
+  const response = await handler({ headers: { authorization: basicAuth() }, body: 'line\n' });
+
+  assertDrainResponse(response, 500);
+  assert.equal(firehoseClient.calls.length, 4);
+  assert.deepEqual(sleepDelays, [100, 200, 400]);
+  assert.equal(logsClient.calls.length, 0);
+  assert.match(logger.errors.at(-1)[1].message, /Failed to deliver 1 Heroku log record/);
+});
+
+test('handler waits for both downstream writes before acknowledging delivery', async () => {
+  const firehoseWrite = Promise.withResolvers();
+  const cloudWatchWrite = Promise.withResolvers();
+  const calls = [];
+  const handler = createHandler({
+    firehoseClient: { send: () => { calls.push('firehose'); return firehoseWrite.promise; } },
+    logsClient: { send: () => { calls.push('cloudwatch'); return cloudWatchWrite.promise; } },
+    knownLogStreams: new Set([`${ENV.HEROKU_LOGS_GROUP}:${ENV.HEROKU_LOGS_STREAM}/2026-05-13`]),
+    now: () => new Date('2026-05-13T12:00:00Z'),
+    env: ENV,
+    logger: createLoggerStub(),
+  });
+  let acknowledged = false;
+  const pendingResponse = handler({ headers: { authorization: basicAuth() }, body: 'line\n' });
+  pendingResponse.then(() => { acknowledged = true; });
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['firehose']);
+  assert.equal(acknowledged, false);
+
+  firehoseWrite.resolve({ FailedPutCount: 0 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['firehose', 'cloudwatch']);
+  assert.equal(acknowledged, false);
+
+  cloudWatchWrite.resolve({});
+  assertDrainResponse(await pendingResponse, 200);
 });

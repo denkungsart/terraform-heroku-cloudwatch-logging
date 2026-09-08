@@ -5,12 +5,14 @@ on:
     paths:
       - ".github/workflows/heroku-logs-lambda-package.yml"
       - "main.tf"
+      - "lambda.tf"
       - "scripts/check-heroku-logs-lambda-package.sh"
       - "support/lambda_heroku/**"
   push:
     paths:
       - ".github/workflows/heroku-logs-lambda-package.yml"
       - "main.tf"
+      - "lambda.tf"
       - "scripts/check-heroku-logs-lambda-package.sh"
       - "support/lambda_heroku/**"
 
@@ -24,6 +26,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Test Heroku Logs Lambda
+        working-directory: support/lambda_heroku
+        run: |
+          npm ci
+          npm test
 
       - uses: hashicorp/setup-terraform@v3
         with:
