@@ -42,6 +42,12 @@ variable "enable_redis_load_avg_alert" {
   default     = false
 }
 
+variable "grafana_workspace_role_arn" {
+  type        = string
+  description = "Optional ARN of an Amazon Managed Grafana workspace role, possibly in another account, allowed to assume a CloudWatch metrics read role in this account. Defaults to null, which creates no role."
+  default     = null
+}
+
 variable "heroku_app_id" {
   type        = string
   description = "The Heroku app ID to attach the log drain to."

@@ -3,11 +3,14 @@
 import { timingSafeEqual } from 'node:crypto';
 
 const REQUIRED_ENV_VARS = [
+  'APP_NAME',
   'AUTH_USERNAME',
   'AUTH_PASSWORD',
   'FIREHOSE_STREAM_NAME',
   'HEROKU_LOGS_GROUP',
   'HEROKU_LOGS_STREAM',
+  'HEROKU_METRICS_GROUP',
+  'HEROKU_METRICS_STREAM',
 ];
 export const FIREHOSE_MAX_BATCH_BYTES = 4 * 1024 * 1024;
 export const FIREHOSE_MAX_RECORD_BYTES = 1_024_000;
@@ -18,6 +21,24 @@ export const CLOUDWATCH_LOGS_MAX_BATCH_SPAN_MS = 24 * 60 * 60 * 1000;
 export const CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES =
   CLOUDWATCH_LOGS_MAX_BATCH_BYTES - CLOUDWATCH_LOGS_EVENT_OVERHEAD_BYTES;
 export const CLOUDWATCH_LOGS_MAX_EVENTS_PER_BATCH = 10_000;
+export const POSTGRES_METRICS_NAMESPACE = 'Heroku/Postgres';
+export const POSTGRES_METRICS_DIMENSIONS = ['App', 'Database', 'Addon'];
+
+// Heroku Postgres samples published as CloudWatch metrics, keyed by the name
+// after `sample#`. Each entry is billed as one custom metric per database.
+export const POSTGRES_SAMPLE_METRICS = {
+  'read-iops': { name: 'ReadIOPS', unit: 'Count/Second' },
+  'write-iops': { name: 'WriteIOPS', unit: 'Count/Second' },
+  'table-cache-hit-rate': { name: 'TableCacheHitRate', unit: 'None' },
+  'index-cache-hit-rate': { name: 'IndexCacheHitRate', unit: 'None' },
+  'memory-cached': { name: 'MemoryCached', unit: 'Kilobytes' },
+  'load-avg-1m': { name: 'LoadAvg1m', unit: 'None' },
+  'active-connections': { name: 'ActiveConnections', unit: 'Count' },
+  'tmp-disk-used': { name: 'TmpDiskUsed', unit: 'Bytes' },
+};
+
+// Frame length, priority/version, timestamp, host, app, proc, msgid, message.
+const HEROKU_SYSLOG_LINE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+\s+(.*)$/;
 
 export function chunk(items, size) {
   const chunks = [];
@@ -155,6 +176,101 @@ export function buildCloudWatchLogEventBatches(events) {
   }
 
   return batches;
+}
+
+function parseLogfmtFields(message) {
+  const fields = {};
+
+  for (const token of message.split(/\s+/)) {
+    const separatorIndex = token.indexOf('=');
+
+    if (separatorIndex > 0) {
+      fields[token.slice(0, separatorIndex)] = token.slice(separatorIndex + 1);
+    }
+  }
+
+  return fields;
+}
+
+/**
+ * Extracts the published metrics from a Heroku Postgres `sample#` log line.
+ * Returns null for any other line.
+ */
+export function parsePostgresSample(line, fallbackTimestamp) {
+  const match = line.match(HEROKU_SYSLOG_LINE);
+
+  if (!match || match[1] !== 'heroku-postgres') {
+    return null;
+  }
+
+  const fields = parseLogfmtFields(match[2]);
+
+  if (!fields.source || !fields.addon) {
+    return null;
+  }
+
+  const values = {};
+
+  for (const [sample, metric] of Object.entries(POSTGRES_SAMPLE_METRICS)) {
+    // parseFloat drops unit suffixes such as `kB` on memory samples.
+    const value = Number.parseFloat(fields[`sample#${sample}`]);
+
+    if (Number.isFinite(value)) {
+      values[metric.name] = value;
+    }
+  }
+
+  if (Object.keys(values).length === 0) {
+    return null;
+  }
+
+  return {
+    timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
+    database: fields.source,
+    addon: fields.addon,
+    values,
+  };
+}
+
+/**
+ * Builds CloudWatch embedded metric format (EMF) log events for the Heroku
+ * Postgres samples in the given raw log lines.
+ */
+export function buildPostgresMetricEvents(lines, appName, fallbackTimestamp = Date.now()) {
+  return lines
+    .map(line => parsePostgresSample(line, fallbackTimestamp))
+    .filter(sample => sample !== null)
+    .map(sample => ({
+      timestamp: sample.timestamp,
+      message: JSON.stringify({
+        _aws: {
+          Timestamp: sample.timestamp,
+          CloudWatchMetrics: [{
+            Namespace: POSTGRES_METRICS_NAMESPACE,
+            Dimensions: [POSTGRES_METRICS_DIMENSIONS],
+            Metrics: Object.values(POSTGRES_SAMPLE_METRICS)
+              .filter(metric => metric.name in sample.values)
+              .map(metric => ({ Name: metric.name, Unit: metric.unit })),
+          }],
+        },
+        App: appName,
+        Database: sample.database,
+        Addon: sample.addon,
+        ...sample.values,
+      }),
+    }))
+    .sort((first, second) => first.timestamp - second.timestamp);
+}
+
+/**
+ * Smithy build-step middleware that marks a PutLogEvents request as EMF, which
+ * CloudWatch requires before it extracts metrics from events sent via the API.
+ */
+export function emfFormatHeaderMiddleware(next) {
+  return args => {
+    args.request.headers['x-amzn-logs-format'] = 'json/emf';
+    return next(args);
+  };
 }
 
 function safeEqualString(actual, expected) {

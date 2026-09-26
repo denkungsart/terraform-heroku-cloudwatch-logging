@@ -12,6 +12,8 @@ import {
   buildCloudWatchLogEvents,
   buildFirehoseRecordBatches,
   buildLogStreamName,
+  buildPostgresMetricEvents,
+  emfFormatHeaderMiddleware,
   validateBasicAuth,
   validateRequiredEnv,
 } from './lambda_heroku_logs_helpers.js';
@@ -123,6 +125,30 @@ export function createHandler({
     }
   }
 
+  /**
+   * Publishes Heroku Postgres samples as CloudWatch metrics by writing EMF
+   * events to the metrics log group.
+   *
+   * @param {string[]} lines - Array of raw log lines.
+   */
+  async function sendPostgresMetrics(lines) {
+    const events = buildPostgresMetricEvents(lines, env.APP_NAME, now().getTime());
+
+    if (events.length === 0) {
+      return;
+    }
+
+    const logGroupName = env.HEROKU_METRICS_GROUP;
+    const logStreamName = buildLogStreamName(env.HEROKU_METRICS_STREAM, now());
+    await ensureLogStream(logGroupName, logStreamName);
+
+    for (const batch of buildCloudWatchLogEventBatches(events)) {
+      const command = new PutLogEventsCommand({ logGroupName, logStreamName, logEvents: batch });
+      command.middlewareStack.add(emfFormatHeaderMiddleware, { step: 'build', name: 'emfFormatHeader' });
+      await logsClient.send(command);
+    }
+  }
+
   async function putFirehoseBatchWithRetries(records) {
     let pendingRecords = records;
 
@@ -202,6 +228,14 @@ export function createHandler({
           buildLogStreamName(env.HEROKU_LOGS_STREAM, now()),
           lines
         );
+
+        // Metrics are best effort, so a metrics failure never fails the drain
+        // request after the logs themselves were delivered.
+        try {
+          await sendPostgresMetrics(lines);
+        } catch (error) {
+          logger.error('Error publishing Heroku Postgres metrics:', error);
+        }
       }
 
       return drainResponse(200);
