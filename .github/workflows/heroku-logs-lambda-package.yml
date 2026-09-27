@@ -6,6 +6,7 @@ on:
       - ".github/workflows/heroku-logs-lambda-package.yml"
       - "main.tf"
       - "lambda.tf"
+      - "versions.tf"
       - "scripts/check-heroku-logs-lambda-package.sh"
       - "support/lambda_heroku/**"
   push:
@@ -13,6 +14,7 @@ on:
       - ".github/workflows/heroku-logs-lambda-package.yml"
       - "main.tf"
       - "lambda.tf"
+      - "versions.tf"
       - "scripts/check-heroku-logs-lambda-package.sh"
       - "support/lambda_heroku/**"
 
@@ -39,6 +41,9 @@ jobs:
 
       - name: Terraform Init
         run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
 
       - name: Validate Heroku Logs Lambda Package
         run: ./scripts/check-heroku-logs-lambda-package.sh
