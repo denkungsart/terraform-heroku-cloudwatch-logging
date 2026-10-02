@@ -255,6 +255,26 @@ resource "aws_cloudwatch_metric_alarm" "log_alarm" {
   ok_actions          = each.value.ok_actions
 }
 
+# Route53 health checks reach every app around the clock, so missing router
+# metrics mean the log drain, the Lambda or metric publishing is broken. This
+# alarm lives in the account, so it works even when Grafana or the
+# observability link does not.
+resource "aws_cloudwatch_metric_alarm" "heroku_metrics_missing_alarm" {
+  alarm_name          = "${var.app_name}_HerokuMetricsMissing_Alarm"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 6
+  metric_name         = "Requests"
+  namespace           = "Heroku/Router"
+  dimensions          = { App = var.app_name }
+  statistic           = "Sum"
+  threshold           = 1
+  period              = 300
+  alarm_description   = "Alert when the log drain Lambda publishes no Heroku router metrics for 30 minutes."
+  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
+  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+  treat_missing_data  = "breaching"
+}
+
 # Keep both namespace variants during the gradual Rails rollout. Remove the
 # canonical-host alarm after all installations publish under HEROKU_APP_NAME.
 resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
