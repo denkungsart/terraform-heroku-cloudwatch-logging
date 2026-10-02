@@ -57,3 +57,15 @@ variable "pagerduty_aws_cloudwatch_integration_key" {
   sensitive   = true
   description = "Service integration identifier used by PagerDuty for CloudWatch alerts."
 }
+
+variable "observability_sink_arns" {
+  type        = map(string)
+  description = "CloudWatch cross-account observability sink ARNs by region. When the provider region has an entry, this account links its metrics to that sink. Defaults to {}, which creates no link."
+  default     = {}
+}
+
+variable "redis_metrics_addon_names" {
+  type        = list(string)
+  description = "Names of the Heroku Redis add-ons whose samples are published as Heroku/Redis CloudWatch metrics, e.g. the primary Redis but not a cache. Each add-on is billed as five custom metrics. Defaults to [], which publishes none."
+  default     = []
+}
