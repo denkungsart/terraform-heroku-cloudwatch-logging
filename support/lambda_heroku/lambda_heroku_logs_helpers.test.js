@@ -8,13 +8,15 @@ import {
   buildCloudWatchLogEvents,
   buildFirehoseRecordBatches,
   buildLogStreamName,
-  buildPostgresMetricEvents,
+  buildMetricEvents,
   chunk,
   CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES,
   emfFormatHeaderMiddleware,
   FIREHOSE_MAX_RECORD_BYTES,
   parseHerokuLogTimestamp,
-  parsePostgresSample,
+  parseAddonSample,
+  parseList,
+  parseRouterLine,
   removePrefix,
   stripAnsiEscapeCodes,
   validateBasicAuth,
@@ -23,10 +25,21 @@ import {
 
 const POSTGRES_SAMPLE_LINE = '520 <134>1 2026-09-26T10:00:00.000000+00:00 host app heroku-postgres - ' +
   'source=DATABASE addon=postgresql-curly-12345 sample#current_transaction=1873 sample#db_size=26219348792bytes ' +
-  'sample#tables=13 sample#active-connections=92 sample#waiting-connections=1 sample#index-cache-hit-rate=0.99723 ' +
+  'sample#db-size-percentage-used=0.02767 sample#tables=13 sample#active-connections=92 sample#waiting-connections=1 ' +
+  'sample#max-connections=200 sample#connections-percentage-used=0.46 sample#index-cache-hit-rate=0.99723 ' +
   'sample#table-cache-hit-rate=0.99118 sample#load-avg-1m=0.39 sample#load-avg-5m=0.325 sample#load-avg-15m=0.3 ' +
-  'sample#read-iops=0 sample#write-iops=112.73 sample#tmp-disk-used=543600640 sample#tmp-disk-available=72435191808 ' +
-  'sample#memory-total=4045060kB sample#memory-free=159696kB sample#memory-cached=3707032kB sample#memory-postgres=182592kB';
+  'sample#read-iops=0 sample#write-iops=112.73 sample#max-iops=3000 sample#iops-percentage-used=0.03758 ' +
+  'sample#tmp-disk-used=543600640 sample#tmp-disk-available=72435191808 sample#memory-total=4045060kB ' +
+  'sample#memory-free=159696kB sample#memory-percentage-used=0.96052 sample#memory-cached=3707032kB sample#memory-postgres=182592kB';
+
+const REDIS_SAMPLE_LINE = '520 <134>1 2026-09-26T10:00:01+00:00 host app heroku-redis - ' +
+  'source=REDIS addon=redis-pointy-52865 sample#active-connections=8 sample#max-connections=38 ' +
+  'sample#connection-percentage-used=0.21053 sample#load-avg-1m=0.06 sample#read-iops=12.038 sample#memory-total=16041732kB ' +
+  'sample#memory-percentage-used=0.41354 sample#memory-redis=17742928bytes sample#hit-rate=0.69551 sample#evicted-keys=0';
+
+function routerLine(timestamp, fields) {
+  return `300 <158>1 ${timestamp} host heroku router - ${fields}`;
+}
 
 function basicAuth(username, password) {
   return `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}`;
@@ -164,86 +177,185 @@ test('buildCloudWatchLogEventBatches rejects messages above the CloudWatch batch
   );
 });
 
-test('parsePostgresSample extracts published metrics from a Heroku Postgres sample line', () => {
-  assert.deepEqual(parsePostgresSample(POSTGRES_SAMPLE_LINE, 123), {
+test('parseAddonSample extracts published metrics from a Heroku Postgres sample line', () => {
+  assert.deepEqual(parseAddonSample(POSTGRES_SAMPLE_LINE, 123), {
+    proc: 'heroku-postgres',
     timestamp: Date.parse('2026-09-26T10:00:00.000000+00:00'),
     database: 'DATABASE',
     addon: 'postgresql-curly-12345',
     values: {
       ReadIOPS: 0,
       WriteIOPS: 112.73,
+      IopsUtilization: 0.03758,
       TableCacheHitRate: 0.99118,
       IndexCacheHitRate: 0.99723,
       MemoryCached: 3707032,
+      MemoryUtilization: 0.96052,
       LoadAvg1m: 0.39,
       ActiveConnections: 92,
+      WaitingConnections: 1,
+      ConnectionsUtilization: 0.46,
+      DbSizeUtilization: 0.02767,
       TmpDiskUsed: 543600640,
     },
   });
 });
 
-test('parsePostgresSample ignores lines that are not Heroku Postgres samples', () => {
+test('parseAddonSample extracts published metrics from a Heroku Redis sample line', () => {
+  assert.deepEqual(parseAddonSample(REDIS_SAMPLE_LINE, 123), {
+    proc: 'heroku-redis',
+    timestamp: Date.parse('2026-09-26T10:00:01+00:00'),
+    database: 'REDIS',
+    addon: 'redis-pointy-52865',
+    values: {
+      MemoryUsed: 17742928,
+      ActiveConnections: 8,
+      ConnectionsUtilization: 0.21053,
+      HitRate: 0.69551,
+      EvictedKeys: 0,
+    },
+  });
+});
+
+test('parseAddonSample ignores lines that are not add-on samples', () => {
   const lines = [
-    '328 <134>1 2026-09-26T10:00:00.000000+00:00 host heroku router - at=info path=/',
-    '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app heroku-redis - source=REDIS addon=redis-1 sample#load-avg-1m=0.1',
+    '328 <134>1 2026-09-26T10:00:00.000000+00:00 host heroku router - at=info path=/ status=200 service=5ms',
     '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app postgres.12345 - [DATABASE] LOG: checkpoint starting',
     '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app heroku-postgres - source=DATABASE addon=postgresql-1 sample#tables=13',
     '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app heroku-postgres - sample#read-iops=1',
+    '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app web.1 - source=DATABASE addon=postgresql-1 sample#read-iops=1',
     'one two',
   ];
 
   for (const line of lines) {
-    assert.equal(parsePostgresSample(line, 123), null, line);
+    assert.equal(parseAddonSample(line, 123), null, line);
   }
 });
 
-test('buildPostgresMetricEvents builds EMF events for Heroku Postgres samples only', () => {
-  const routerLine = '328 <134>1 2026-09-26T09:59:59.000000+00:00 host heroku router - at=info path=/';
-  const events = buildPostgresMetricEvents([POSTGRES_SAMPLE_LINE, routerLine], 'prestage', 123);
+test('parseRouterLine reads status, service time and relevant router errors', () => {
+  const timestamp = '2026-09-26T10:00:02.123456+00:00';
 
-  assert.equal(events.length, 1);
-  assert.equal(events[0].timestamp, Date.parse('2026-09-26T10:00:00.000000+00:00'));
-  assert.deepEqual(JSON.parse(events[0].message), {
-    _aws: {
-      Timestamp: Date.parse('2026-09-26T10:00:00.000000+00:00'),
-      CloudWatchMetrics: [{
-        Namespace: 'Heroku/Postgres',
-        Dimensions: [['App', 'Database', 'Addon']],
-        Metrics: [
-          { Name: 'ReadIOPS', Unit: 'Count/Second' },
-          { Name: 'WriteIOPS', Unit: 'Count/Second' },
-          { Name: 'TableCacheHitRate', Unit: 'None' },
-          { Name: 'IndexCacheHitRate', Unit: 'None' },
-          { Name: 'MemoryCached', Unit: 'Kilobytes' },
-          { Name: 'LoadAvg1m', Unit: 'None' },
-          { Name: 'ActiveConnections', Unit: 'Count' },
-          { Name: 'TmpDiskUsed', Unit: 'Bytes' },
-        ],
-      }],
-    },
-    App: 'prestage',
-    Database: 'DATABASE',
-    Addon: 'postgresql-curly-12345',
-    ReadIOPS: 0,
-    WriteIOPS: 112.73,
-    TableCacheHitRate: 0.99118,
-    IndexCacheHitRate: 0.99723,
-    MemoryCached: 3707032,
-    LoadAvg1m: 0.39,
-    ActiveConnections: 92,
-    TmpDiskUsed: 543600640,
-  });
+  assert.deepEqual(
+    parseRouterLine(routerLine(timestamp, 'at=info method=GET path="/up" dyno=web.2 connect=0ms service=6ms status=302 bytes=0'), 123),
+    { timestamp: Date.parse(timestamp), status: 302, serviceMs: 6, error: false }
+  );
+  assert.deepEqual(
+    parseRouterLine(routerLine(timestamp, 'at=error code=H12 desc="Request timeout" method=GET path="/" dyno=web.1 connect=1ms service=30000ms status=503 bytes=0'), 123),
+    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 30000, error: true }
+  );
+  assert.deepEqual(
+    parseRouterLine(routerLine(timestamp, 'at=info code=H80 desc="Maintenance mode" method=GET path="/up" dyno= connect=0ms service=0ms status=503 bytes=596'), 123),
+    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 0, error: false }
+  );
+  assert.equal(parseRouterLine(REDIS_SAMPLE_LINE, 123), null);
+  assert.equal(parseRouterLine(routerLine(timestamp, 'at=info method=GET path="/"'), 123), null);
 });
 
-test('buildPostgresMetricEvents declares only the metrics present in a sample', () => {
+test('buildMetricEvents builds EMF events for Postgres samples and allowlisted Redis add-ons only', () => {
+  const unlistedRedisLine = REDIS_SAMPLE_LINE.replace('redis-pointy-52865', 'redis-mini-1');
+  const events = buildMetricEvents([REDIS_SAMPLE_LINE, POSTGRES_SAMPLE_LINE, unlistedRedisLine], {
+    appName: 'prestage',
+    redisAddons: new Set(['redis-pointy-52865']),
+    fallbackTimestamp: 123,
+  });
+
+  assert.equal(events.length, 2);
+  const [postgres, redis] = events.map(event => JSON.parse(event.message));
+
+  assert.deepEqual(postgres._aws, {
+    Timestamp: Date.parse('2026-09-26T10:00:00.000000+00:00'),
+    CloudWatchMetrics: [{
+      Namespace: 'Heroku/Postgres',
+      Dimensions: [['App', 'Database', 'Addon']],
+      Metrics: [
+        { Name: 'ReadIOPS', Unit: 'Count/Second' },
+        { Name: 'WriteIOPS', Unit: 'Count/Second' },
+        { Name: 'IopsUtilization', Unit: 'None' },
+        { Name: 'TableCacheHitRate', Unit: 'None' },
+        { Name: 'IndexCacheHitRate', Unit: 'None' },
+        { Name: 'MemoryCached', Unit: 'Kilobytes' },
+        { Name: 'MemoryUtilization', Unit: 'None' },
+        { Name: 'LoadAvg1m', Unit: 'None' },
+        { Name: 'ActiveConnections', Unit: 'Count' },
+        { Name: 'WaitingConnections', Unit: 'Count' },
+        { Name: 'ConnectionsUtilization', Unit: 'None' },
+        { Name: 'DbSizeUtilization', Unit: 'None' },
+        { Name: 'TmpDiskUsed', Unit: 'Bytes' },
+      ],
+    }],
+  });
+  assert.deepEqual(
+    { App: postgres.App, Database: postgres.Database, Addon: postgres.Addon, WriteIOPS: postgres.WriteIOPS },
+    { App: 'prestage', Database: 'DATABASE', Addon: 'postgresql-curly-12345', WriteIOPS: 112.73 }
+  );
+
+  assert.equal(redis._aws.CloudWatchMetrics[0].Namespace, 'Heroku/Redis');
+  assert.deepEqual(
+    { App: redis.App, Database: redis.Database, Addon: redis.Addon, MemoryUsed: redis.MemoryUsed, HitRate: redis.HitRate },
+    { App: 'prestage', Database: 'REDIS', Addon: 'redis-pointy-52865', MemoryUsed: 17742928, HitRate: 0.69551 }
+  );
+});
+
+test('buildMetricEvents declares only the metrics present in a sample', () => {
   const line = '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app heroku-postgres - ' +
     'source=HEROKU_POSTGRESQL_RED addon=postgresql-follower-1 sample#read-iops=4.5';
-  const [event] = buildPostgresMetricEvents([line], 'prestage', 123);
+  const [event] = buildMetricEvents([line], { appName: 'prestage', fallbackTimestamp: 123 });
   const message = JSON.parse(event.message);
 
   assert.deepEqual(message._aws.CloudWatchMetrics[0].Metrics, [{ Name: 'ReadIOPS', Unit: 'Count/Second' }]);
   assert.equal(message.Database, 'HEROKU_POSTGRESQL_RED');
   assert.equal(message.ReadIOPS, 4.5);
+});
+
+test('buildMetricEvents aggregates the router lines of a request into one event', () => {
+  const lines = [
+    routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" connect=0ms service=10ms status=200 bytes=1'),
+    routerLine('2026-09-26T10:00:03+00:00', 'at=error code=H12 desc="Request timeout" method=GET path="/" connect=0ms service=30000ms status=503 bytes=0'),
+    routerLine('2026-09-26T10:00:02+00:00', 'at=info method=GET path="/" connect=0ms service=40ms status=500 bytes=1'),
+    '328 <134>1 2026-09-26T10:00:02+00:00 host app web.1 - Completed 200 OK',
+  ];
+  const events = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].timestamp, Date.parse('2026-09-26T10:00:03+00:00'));
+  assert.deepEqual(JSON.parse(events[0].message), {
+    _aws: {
+      Timestamp: Date.parse('2026-09-26T10:00:03+00:00'),
+      CloudWatchMetrics: [{
+        Namespace: 'Heroku/Router',
+        Dimensions: [['App']],
+        Metrics: [
+          { Name: 'Requests', Unit: 'Count' },
+          { Name: 'ServerErrors', Unit: 'Count' },
+          { Name: 'RouterErrors', Unit: 'Count' },
+          { Name: 'ServiceTime', Unit: 'Milliseconds' },
+        ],
+      }],
+    },
+    App: 'prestage',
+    Requests: 3,
+    ServerErrors: 2,
+    RouterErrors: 1,
+    ServiceTime: [10, 30000, 40],
+  });
+});
+
+test('buildMetricEvents splits router service times into events of at most 100 values', () => {
+  const lines = Array.from({ length: 250 }, (_, index) =>
+    routerLine('2026-09-26T10:00:01+00:00', `at=info method=GET path="/" connect=0ms service=${index}ms status=200 bytes=1`));
+  const messages = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
+
+  assert.deepEqual(messages.map(message => message.ServiceTime.length), [100, 100, 50]);
+  assert.deepEqual(messages.map(message => message.Requests), [250, undefined, undefined]);
+  assert.deepEqual(
+    messages.map(message => message._aws.CloudWatchMetrics[0].Metrics.map(metric => metric.Name)),
+    [['Requests', 'ServerErrors', 'RouterErrors', 'ServiceTime'], ['ServiceTime'], ['ServiceTime']]
+  );
+});
+
+test('parseList splits comma-separated values and ignores blanks', () => {
+  assert.deepEqual(parseList(' redis-a, ,redis-b,'), new Set(['redis-a', 'redis-b']));
+  assert.deepEqual(parseList(undefined), new Set());
 });
 
 test('emfFormatHeaderMiddleware marks the request as EMF before passing it on', async () => {

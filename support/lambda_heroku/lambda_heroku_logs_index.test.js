@@ -350,7 +350,7 @@ test('handler waits for both downstream writes before acknowledging delivery', a
   assertDrainResponse(await pendingResponse, 200);
 });
 
-test('handler publishes Heroku Postgres samples as EMF events to the metrics log group', async () => {
+test('handler publishes Heroku metrics as EMF events to the metrics log group', async () => {
   const firehoseClient = createAwsClientStub([{ FailedPutCount: 0 }]);
   const logsClient = createAwsClientStub();
   const handler = createHandler({
@@ -389,7 +389,7 @@ test('handler publishes Heroku Postgres samples as EMF events to the metrics log
   );
 });
 
-test('handler acknowledges delivered logs when publishing Postgres metrics fails', async () => {
+test('handler acknowledges delivered logs when publishing metrics fails', async () => {
   const firehoseClient = createAwsClientStub([{ FailedPutCount: 0 }]);
   const logsClient = createAwsClientStub([{}, new Error('Metrics unavailable')]);
   const logger = createLoggerStub();
@@ -405,6 +405,6 @@ test('handler acknowledges delivered logs when publishing Postgres metrics fails
   const response = await handler({ headers: { authorization: basicAuth() }, body: `${POSTGRES_SAMPLE_LINE}\n` });
 
   assertDrainResponse(response, 200);
-  assert.equal(logger.errors.at(-1)[0], 'Error publishing Heroku Postgres metrics:');
+  assert.equal(logger.errors.at(-1)[0], 'Error publishing Heroku metrics:');
   assert.match(logger.errors.at(-1)[1].message, /Metrics unavailable/);
 });

@@ -58,6 +58,7 @@ module "heroku_logs_lambda" {
     HEROKU_LOGS_STREAM    = local.heroku_logs_log_stream_name
     HEROKU_METRICS_GROUP  = aws_cloudwatch_log_group.heroku_metrics.name
     HEROKU_METRICS_STREAM = local.heroku_metrics_log_stream_name
+    REDIS_METRICS_ADDONS  = join(",", var.redis_metrics_addon_names)
     AUTH_USERNAME         = random_string.heroku_logs_lambda_basic_auth_username.result # Note: Acceptable security trade-off to store this as cleartext
     AUTH_PASSWORD         = random_string.heroku_logs_lambda_basic_auth_password.result # Note: Acceptable security trade-off to store this as cleartext
   }

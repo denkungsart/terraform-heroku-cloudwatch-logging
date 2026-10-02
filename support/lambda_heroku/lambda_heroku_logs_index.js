@@ -12,8 +12,9 @@ import {
   buildCloudWatchLogEvents,
   buildFirehoseRecordBatches,
   buildLogStreamName,
-  buildPostgresMetricEvents,
+  buildMetricEvents,
   emfFormatHeaderMiddleware,
+  parseList,
   validateBasicAuth,
   validateRequiredEnv,
 } from './lambda_heroku_logs_helpers.js';
@@ -126,13 +127,17 @@ export function createHandler({
   }
 
   /**
-   * Publishes Heroku Postgres samples as CloudWatch metrics by writing EMF
-   * events to the metrics log group.
+   * Publishes Heroku add-on samples and router metrics as CloudWatch metrics
+   * by writing EMF events to the metrics log group.
    *
    * @param {string[]} lines - Array of raw log lines.
    */
-  async function sendPostgresMetrics(lines) {
-    const events = buildPostgresMetricEvents(lines, env.APP_NAME, now().getTime());
+  async function sendMetrics(lines) {
+    const events = buildMetricEvents(lines, {
+      appName: env.APP_NAME,
+      redisAddons: parseList(env.REDIS_METRICS_ADDONS),
+      fallbackTimestamp: now().getTime(),
+    });
 
     if (events.length === 0) {
       return;
@@ -232,9 +237,9 @@ export function createHandler({
         // Metrics are best effort, so a metrics failure never fails the drain
         // request after the logs themselves were delivered.
         try {
-          await sendPostgresMetrics(lines);
+          await sendMetrics(lines);
         } catch (error) {
-          logger.error('Error publishing Heroku Postgres metrics:', error);
+          logger.error('Error publishing Heroku metrics:', error);
         }
       }
 

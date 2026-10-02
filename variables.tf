@@ -63,3 +63,9 @@ variable "observability_sink_arns" {
   description = "CloudWatch cross-account observability sink ARNs by region. When the provider region has an entry, this account links its metrics to that sink. Defaults to {}, which creates no link."
   default     = {}
 }
+
+variable "redis_metrics_addon_names" {
+  type        = list(string)
+  description = "Names of the Heroku Redis add-ons whose samples are published as Heroku/Redis CloudWatch metrics, e.g. all add-ons except mini plans. Each add-on is billed as five custom metrics. Defaults to [], which publishes none."
+  default     = []
+}

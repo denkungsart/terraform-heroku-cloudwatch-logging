@@ -21,21 +21,49 @@ export const CLOUDWATCH_LOGS_MAX_BATCH_SPAN_MS = 24 * 60 * 60 * 1000;
 export const CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES =
   CLOUDWATCH_LOGS_MAX_BATCH_BYTES - CLOUDWATCH_LOGS_EVENT_OVERHEAD_BYTES;
 export const CLOUDWATCH_LOGS_MAX_EVENTS_PER_BATCH = 10_000;
-export const POSTGRES_METRICS_NAMESPACE = 'Heroku/Postgres';
-export const POSTGRES_METRICS_DIMENSIONS = ['App', 'Database', 'Addon'];
+export const ADDON_METRICS_DIMENSIONS = ['App', 'Database', 'Addon'];
+export const ROUTER_METRICS_NAMESPACE = 'Heroku/Router';
+export const ROUTER_METRICS_DIMENSIONS = ['App'];
+export const EMF_MAX_VALUES_PER_METRIC = 100;
 
 // Heroku Postgres samples published as CloudWatch metrics, keyed by the name
 // after `sample#`. Each entry is billed as one custom metric per database.
+// Utilization metrics are fractions from 0 to 1 of the plan limit.
 export const POSTGRES_SAMPLE_METRICS = {
   'read-iops': { name: 'ReadIOPS', unit: 'Count/Second' },
   'write-iops': { name: 'WriteIOPS', unit: 'Count/Second' },
+  'iops-percentage-used': { name: 'IopsUtilization', unit: 'None' },
   'table-cache-hit-rate': { name: 'TableCacheHitRate', unit: 'None' },
   'index-cache-hit-rate': { name: 'IndexCacheHitRate', unit: 'None' },
   'memory-cached': { name: 'MemoryCached', unit: 'Kilobytes' },
+  'memory-percentage-used': { name: 'MemoryUtilization', unit: 'None' },
   'load-avg-1m': { name: 'LoadAvg1m', unit: 'None' },
   'active-connections': { name: 'ActiveConnections', unit: 'Count' },
+  'waiting-connections': { name: 'WaitingConnections', unit: 'Count' },
+  'connections-percentage-used': { name: 'ConnectionsUtilization', unit: 'None' },
+  'db-size-percentage-used': { name: 'DbSizeUtilization', unit: 'None' },
   'tmp-disk-used': { name: 'TmpDiskUsed', unit: 'Bytes' },
 };
+
+// Heroku Redis samples, published only for allowlisted add-ons. Memory and
+// load samples describe the shared host, so memory-redis is the add-on usage.
+export const REDIS_SAMPLE_METRICS = {
+  'memory-redis': { name: 'MemoryUsed', unit: 'Bytes' },
+  'active-connections': { name: 'ActiveConnections', unit: 'Count' },
+  'connection-percentage-used': { name: 'ConnectionsUtilization', unit: 'None' },
+  'hit-rate': { name: 'HitRate', unit: 'None' },
+  'evicted-keys': { name: 'EvictedKeys', unit: 'Count' },
+};
+
+// Add-on sample metrics by the syslog process name of their log lines.
+export const ADDON_SAMPLE_SOURCES = {
+  'heroku-postgres': { namespace: 'Heroku/Postgres', metrics: POSTGRES_SAMPLE_METRICS },
+  'heroku-redis': { namespace: 'Heroku/Redis', metrics: REDIS_SAMPLE_METRICS },
+};
+
+// Router error codes caused by clients, maintenance mode or the platform, as
+// excluded by the HerokuHTTPError alarm.
+const IGNORED_ROUTER_ERROR_CODES = new Set(['H27', 'H28', 'H31', 'H32', 'H80', 'H99']);
 
 // Frame length, priority/version, timestamp, host, app, proc, msgid, message.
 const HEROKU_SYSLOG_LINE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+\s+(.*)$/;
@@ -192,28 +220,29 @@ function parseLogfmtFields(message) {
   return fields;
 }
 
-/**
- * Extracts the published metrics from a Heroku Postgres `sample#` log line.
- * Returns null for any other line.
- */
-export function parsePostgresSample(line, fallbackTimestamp) {
+function parseHerokuSyslogLine(line) {
   const match = line.match(HEROKU_SYSLOG_LINE);
 
-  if (!match || match[1] !== 'heroku-postgres') {
-    return null;
-  }
+  return match ? { proc: match[1], fields: parseLogfmtFields(match[2]) } : null;
+}
 
-  const fields = parseLogfmtFields(match[2]);
+/**
+ * Extracts the published metrics from a Heroku Postgres or Heroku Redis
+ * `sample#` log line. Returns null for any other line.
+ */
+export function parseAddonSample(line, fallbackTimestamp) {
+  const parsed = parseHerokuSyslogLine(line);
+  const source = parsed && ADDON_SAMPLE_SOURCES[parsed.proc];
 
-  if (!fields.source || !fields.addon) {
+  if (!source || !parsed.fields.source || !parsed.fields.addon) {
     return null;
   }
 
   const values = {};
 
-  for (const [sample, metric] of Object.entries(POSTGRES_SAMPLE_METRICS)) {
+  for (const [sample, metric] of Object.entries(source.metrics)) {
     // parseFloat drops unit suffixes such as `kB` on memory samples.
-    const value = Number.parseFloat(fields[`sample#${sample}`]);
+    const value = Number.parseFloat(parsed.fields[`sample#${sample}`]);
 
     if (Number.isFinite(value)) {
       values[metric.name] = value;
@@ -225,41 +254,139 @@ export function parsePostgresSample(line, fallbackTimestamp) {
   }
 
   return {
+    proc: parsed.proc,
     timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
-    database: fields.source,
-    addon: fields.addon,
+    database: parsed.fields.source,
+    addon: parsed.fields.addon,
     values,
   };
 }
 
 /**
- * Builds CloudWatch embedded metric format (EMF) log events for the Heroku
- * Postgres samples in the given raw log lines.
+ * Extracts the status, service time and error state from a Heroku router log
+ * line. Returns null for any other line.
  */
-export function buildPostgresMetricEvents(lines, appName, fallbackTimestamp = Date.now()) {
-  return lines
-    .map(line => parsePostgresSample(line, fallbackTimestamp))
-    .filter(sample => sample !== null)
-    .map(sample => ({
-      timestamp: sample.timestamp,
-      message: JSON.stringify({
-        _aws: {
-          Timestamp: sample.timestamp,
-          CloudWatchMetrics: [{
-            Namespace: POSTGRES_METRICS_NAMESPACE,
-            Dimensions: [POSTGRES_METRICS_DIMENSIONS],
-            Metrics: Object.values(POSTGRES_SAMPLE_METRICS)
-              .filter(metric => metric.name in sample.values)
-              .map(metric => ({ Name: metric.name, Unit: metric.unit })),
-          }],
-        },
-        App: appName,
-        Database: sample.database,
-        Addon: sample.addon,
-        ...sample.values,
-      }),
-    }))
-    .sort((first, second) => first.timestamp - second.timestamp);
+export function parseRouterLine(line, fallbackTimestamp) {
+  const parsed = parseHerokuSyslogLine(line);
+
+  if (!parsed || parsed.proc !== 'router') {
+    return null;
+  }
+
+  const status = Number.parseInt(parsed.fields.status, 10);
+  const serviceMs = Number.parseFloat(parsed.fields.service);
+
+  if (!Number.isFinite(status)) {
+    return null;
+  }
+
+  return {
+    timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
+    status,
+    serviceMs: Number.isFinite(serviceMs) ? serviceMs : null,
+    error: parsed.fields.at === 'error' && !IGNORED_ROUTER_ERROR_CODES.has(parsed.fields.code),
+  };
+}
+
+function emfEvent(timestamp, namespace, dimensions, metrics) {
+  return {
+    timestamp,
+    message: JSON.stringify({
+      _aws: {
+        Timestamp: timestamp,
+        CloudWatchMetrics: [{
+          Namespace: namespace,
+          Dimensions: [Object.keys(dimensions)],
+          Metrics: metrics.map(metric => ({ Name: metric.name, Unit: metric.unit })),
+        }],
+      },
+      ...dimensions,
+      ...Object.fromEntries(metrics.map(metric => [metric.name, metric.value])),
+    }),
+  };
+}
+
+function addonSampleEvent(sample, appName) {
+  const metrics = Object.values(ADDON_SAMPLE_SOURCES[sample.proc].metrics)
+    .filter(metric => metric.name in sample.values)
+    .map(metric => ({ ...metric, value: sample.values[metric.name] }));
+
+  return emfEvent(
+    sample.timestamp,
+    ADDON_SAMPLE_SOURCES[sample.proc].namespace,
+    { App: appName, Database: sample.database, Addon: sample.addon },
+    metrics
+  );
+}
+
+// One drain request carries many router lines, so the router metrics of a
+// request go into one event. EMF allows 100 values per metric, so service
+// times beyond that go into further events.
+function routerEvents(requests, appName) {
+  if (requests.length === 0) {
+    return [];
+  }
+
+  const timestamp = Math.max(...requests.map(request => request.timestamp));
+  const serviceTimes = requests.map(request => request.serviceMs).filter(value => value !== null);
+  const serviceTimeChunks = serviceTimes.length > 0 ? chunk(serviceTimes, EMF_MAX_VALUES_PER_METRIC) : [[]];
+
+  return serviceTimeChunks.map((values, index) => {
+    const metrics = [];
+
+    if (index === 0) {
+      metrics.push(
+        { name: 'Requests', unit: 'Count', value: requests.length },
+        { name: 'ServerErrors', unit: 'Count', value: requests.filter(request => request.status >= 500).length },
+        { name: 'RouterErrors', unit: 'Count', value: requests.filter(request => request.error).length }
+      );
+    }
+
+    if (values.length > 0) {
+      metrics.push({ name: 'ServiceTime', unit: 'Milliseconds', value: values });
+    }
+
+    return emfEvent(timestamp, ROUTER_METRICS_NAMESPACE, { App: appName }, metrics);
+  });
+}
+
+/**
+ * Builds CloudWatch embedded metric format (EMF) log events for the add-on
+ * samples and router lines in the given raw log lines. Heroku Redis samples
+ * are only published for the add-ons in redisAddons.
+ */
+export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fallbackTimestamp = Date.now() }) {
+  const samples = [];
+  const requests = [];
+
+  for (const line of lines) {
+    const sample = parseAddonSample(line, fallbackTimestamp);
+
+    if (sample) {
+      if (sample.proc !== 'heroku-redis' || redisAddons.has(sample.addon)) {
+        samples.push(sample);
+      }
+      continue;
+    }
+
+    const request = parseRouterLine(line, fallbackTimestamp);
+
+    if (request) {
+      requests.push(request);
+    }
+  }
+
+  return [
+    ...samples.map(sample => addonSampleEvent(sample, appName)),
+    ...routerEvents(requests, appName),
+  ].sort((first, second) => first.timestamp - second.timestamp);
+}
+
+/**
+ * Parses a comma-separated environment variable into a set.
+ */
+export function parseList(value) {
+  return new Set((value || '').split(',').map(item => item.trim()).filter(item => item !== ''));
 }
 
 /**

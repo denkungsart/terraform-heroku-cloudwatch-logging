@@ -12,14 +12,14 @@ The Rack::Attack status=429 alarm is present but notification actions are disabl
 
 The Redis load average alert is opt-in. Set `enable_redis_load_avg_alert = true` to create it.
 
-## Heroku Postgres metrics
+## Heroku metrics
 
-The handler also publishes the `sample#` metrics Heroku Postgres writes to the app's log stream as CloudWatch metrics. It writes them as [embedded metric format](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html) events to a dedicated `/heroku/metrics` log group (namespaced like the other log groups), and CloudWatch extracts the metrics from there.
+The handler also publishes metrics extracted from the log stream. It writes them as [embedded metric format](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html) events to a dedicated `/heroku/metrics` log group (namespaced like the other log groups), and CloudWatch extracts the metrics from there. The namespaces are shared by all apps so dashboards can query them uniformly.
 
-- Namespace: `Heroku/Postgres`, shared by all apps so dashboards can query them uniformly.
-- Dimensions: `App` (`app_name`), `Database` (the attachment name, e.g. `DATABASE` or `HEROKU_POSTGRESQL_RED` for followers), and `Addon`.
-- Metrics: `ReadIOPS`, `WriteIOPS`, `TableCacheHitRate`, `IndexCacheHitRate`, `MemoryCached`, `LoadAvg1m`, `ActiveConnections`, and `TmpDiskUsed`. The list lives in `POSTGRES_SAMPLE_METRICS` in the Lambda helpers.
+- `Heroku/Postgres`, from the `sample#` lines of Heroku Postgres, with dimensions `App` (`app_name`), `Database` (the attachment name, e.g. `DATABASE` or `HEROKU_POSTGRESQL_RED`) and `Addon`: `ReadIOPS`, `WriteIOPS`, `IopsUtilization`, `TableCacheHitRate`, `IndexCacheHitRate`, `MemoryCached`, `MemoryUtilization`, `LoadAvg1m`, `ActiveConnections`, `WaitingConnections`, `ConnectionsUtilization`, `DbSizeUtilization`, and `TmpDiskUsed`. Utilization metrics are fractions of the plan limit. Essential-tier databases do not log these samples.
+- `Heroku/Redis`, from the `sample#` lines of the Heroku Redis add-ons listed in `redis_metrics_addon_names`, with the same dimensions: `MemoryUsed`, `ActiveConnections`, `ConnectionsUtilization`, `HitRate`, and `EvictedKeys`.
+- `Heroku/Router`, from the router lines, with dimension `App`: `Requests`, `ServerErrors` (status 5xx), `RouterErrors` (H codes, except those the HerokuHTTPError alarm ignores), and `ServiceTime` with every request's service time, so percentiles work.
 
-Each metric is billed as one CloudWatch custom metric per database. Essential-tier databases do not log these samples, so they publish no metrics. Publishing is best effort: a failure is logged and never fails log delivery.
+The lists live in `POSTGRES_SAMPLE_METRICS` and `REDIS_SAMPLE_METRICS` in the Lambda helpers. Each metric is billed as one CloudWatch custom metric per database, Redis add-on or app. Publishing is best effort: a failure is logged and never fails log delivery.
 
 Set `observability_sink_arns` to the CloudWatch cross-account observability sinks of the monitoring account, keyed by region, to link this account's metrics to the sink in the provider's region. The link shares metrics only, not the log contents. The sinks and the Grafana workspace that reads them live in [terraform-grafana](https://github.com/denkungsart/terraform-grafana).
