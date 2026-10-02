@@ -8,6 +8,35 @@ resource "random_string" "heroku_logs_lambda_basic_auth_password" {
   special = false
 }
 
+# Lambda function code package
+# -------------------------------------------------------------------------------
+locals {
+  lambda_package_sources = jsondecode(file("${local.lambda_source_path}/package_sources.json"))
+}
+
+# Package only the handler files listed in package_sources.json. The Node.js Lambda
+# runtime provides the AWS SDK for JavaScript v3, so no npm dependencies are installed
+# and no packaging code runs locally during plan or apply.
+data "archive_file" "heroku_logs_lambda" {
+  type        = "zip"
+  output_path = "${path.root}/builds/${local.lambda_function_name}.zip"
+
+  dynamic "source" {
+    for_each = [for claim in local.lambda_package_sources : claim if can(claim.path)]
+    content {
+      content  = file("${local.lambda_source_path}/${source.value.path}")
+      filename = source.value.path
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = alltrue([for claim in local.lambda_package_sources : can(claim.path) && length(claim) == 1])
+      error_message = "package_sources.json may only list files as {\"path\": ...}; npm dependencies are not packaged because the Node.js Lambda runtime provides the AWS SDK."
+    }
+  }
+}
+
 # Lambda function for heroku logs
 # -------------------------------------------------------------------------------
 module "heroku_logs_lambda" {
@@ -19,17 +48,8 @@ module "heroku_logs_lambda" {
   handler       = "lambda_heroku_logs_index.handler"
   runtime       = "nodejs22.x"
 
-  # Package deterministic npm dependencies from package-lock.json and include the runtime files
-  # needed to load the ESM handler, without re-zipping local node_modules from the working tree.
-  source_path = [
-    for claim in jsondecode(file("${local.lambda_source_path}/package_sources.json")) : {
-      for key, value in claim :
-      key => "${local.lambda_source_path}/${value}"
-    }
-  ]
-
-  # Avoid repackaging on every apply when only the module's internal package timestamp changes.
-  trigger_on_package_timestamp = false
+  create_package         = false
+  local_existing_package = data.archive_file.heroku_logs_lambda.output_path
 
   environment_variables = {
     APP_NAME              = var.app_name
