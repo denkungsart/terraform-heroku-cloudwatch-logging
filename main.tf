@@ -13,5 +13,7 @@ locals {
   firehose_s3_prefix                  = local.namespace == null ? "heroku-logs/" : "heroku-logs/${local.namespace}/"
   heroku_logs_log_group_name          = local.namespace == null ? "/heroku/logs" : "/heroku/${local.namespace}/logs"
   heroku_logs_log_stream_name         = local.namespace == null ? "heroku-logs-stream" : "${local.namespace}-heroku-logs-stream"
+  heroku_metrics_log_group_name       = local.namespace == null ? "/heroku/metrics" : "/heroku/${local.namespace}/metrics"
+  heroku_metrics_log_stream_name      = local.namespace == null ? "heroku-postgres-metrics" : "${local.namespace}-heroku-postgres-metrics"
   lambda_function_name                = local.namespace == null ? "heroku-logs-lambda" : "${local.namespace}-heroku-logs-lambda"
 }

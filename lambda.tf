@@ -52,11 +52,15 @@ module "heroku_logs_lambda" {
   local_existing_package = data.archive_file.heroku_logs_lambda.output_path
 
   environment_variables = {
-    FIREHOSE_STREAM_NAME = aws_kinesis_firehose_delivery_stream.heroku_logs_stream.name
-    HEROKU_LOGS_GROUP    = aws_cloudwatch_log_group.heroku_logs.name
-    HEROKU_LOGS_STREAM   = local.heroku_logs_log_stream_name
-    AUTH_USERNAME        = random_string.heroku_logs_lambda_basic_auth_username.result # Note: Acceptable security trade-off to store this as cleartext
-    AUTH_PASSWORD        = random_string.heroku_logs_lambda_basic_auth_password.result # Note: Acceptable security trade-off to store this as cleartext
+    APP_NAME              = var.app_name
+    FIREHOSE_STREAM_NAME  = aws_kinesis_firehose_delivery_stream.heroku_logs_stream.name
+    HEROKU_LOGS_GROUP     = aws_cloudwatch_log_group.heroku_logs.name
+    HEROKU_LOGS_STREAM    = local.heroku_logs_log_stream_name
+    HEROKU_METRICS_GROUP  = aws_cloudwatch_log_group.heroku_metrics.name
+    HEROKU_METRICS_STREAM = local.heroku_metrics_log_stream_name
+    REDIS_METRICS_ADDONS  = join(",", var.redis_metrics_addon_names)
+    AUTH_USERNAME         = random_string.heroku_logs_lambda_basic_auth_username.result # Note: Acceptable security trade-off to store this as cleartext
+    AUTH_PASSWORD         = random_string.heroku_logs_lambda_basic_auth_password.result # Note: Acceptable security trade-off to store this as cleartext
   }
 
   memory_size   = 128
@@ -90,7 +94,9 @@ module "heroku_logs_lambda" {
       ]
       resources = [
         aws_cloudwatch_log_group.heroku_logs.arn,
-        "${aws_cloudwatch_log_group.heroku_logs.arn}:*"
+        "${aws_cloudwatch_log_group.heroku_logs.arn}:*",
+        aws_cloudwatch_log_group.heroku_metrics.arn,
+        "${aws_cloudwatch_log_group.heroku_metrics.arn}:*"
       ]
     }
   }

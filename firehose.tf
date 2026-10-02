@@ -10,6 +10,13 @@ resource "aws_cloudwatch_log_group" "heroku_logs" {
   retention_in_days = 60
 }
 
+# Holds the EMF events CloudWatch extracts Heroku Postgres metrics from. The
+# metrics outlive these events, so a short retention is enough.
+resource "aws_cloudwatch_log_group" "heroku_metrics" {
+  name              = local.heroku_metrics_log_group_name
+  retention_in_days = 7
+}
+
 # Kinesis Firehose delivery stream
 # -------------------------------------------------------------------------------
 resource "aws_kinesis_firehose_delivery_stream" "heroku_logs_stream" {

@@ -6,12 +6,18 @@ import test from 'node:test';
 import { createHandler } from './lambda_heroku_logs_index.js';
 
 const ENV = {
+  APP_NAME: 'prestage',
   AUTH_USERNAME: 'heroku',
   AUTH_PASSWORD: 'secret',
   FIREHOSE_STREAM_NAME: 'firehose-stream',
   HEROKU_LOGS_GROUP: '/heroku/logs',
   HEROKU_LOGS_STREAM: 'heroku-logs-stream',
+  HEROKU_METRICS_GROUP: '/heroku/metrics',
+  HEROKU_METRICS_STREAM: 'heroku-postgres-metrics',
 };
+
+const POSTGRES_SAMPLE_LINE = '328 <134>1 2026-05-13T08:16:55.000000+00:00 host app heroku-postgres - ' +
+  'source=DATABASE addon=postgresql-curly-12345 sample#read-iops=12.5 sample#write-iops=3';
 
 function basicAuth(username = ENV.AUTH_USERNAME, password = ENV.AUTH_PASSWORD) {
   return `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}`;
@@ -342,4 +348,63 @@ test('handler waits for both downstream writes before acknowledging delivery', a
 
   cloudWatchWrite.resolve({});
   assertDrainResponse(await pendingResponse, 200);
+});
+
+test('handler publishes Heroku metrics as EMF events to the metrics log group', async () => {
+  const firehoseClient = createAwsClientStub([{ FailedPutCount: 0 }]);
+  const logsClient = createAwsClientStub();
+  const handler = createHandler({
+    firehoseClient,
+    logsClient,
+    env: ENV,
+    logger: createLoggerStub(),
+    now: () => new Date('2026-05-13T12:00:00Z'),
+    knownLogStreams: new Set([`${ENV.HEROKU_LOGS_GROUP}:${ENV.HEROKU_LOGS_STREAM}/2026-05-13`]),
+  });
+
+  const response = await handler({ headers: { authorization: basicAuth() }, body: `${POSTGRES_SAMPLE_LINE}\n` });
+
+  assertDrainResponse(response, 200);
+  assert.deepEqual(
+    logsClient.calls.map(command => [command.constructor.name, command.input.logGroupName]),
+    [
+      ['PutLogEventsCommand', ENV.HEROKU_LOGS_GROUP],
+      ['DescribeLogStreamsCommand', ENV.HEROKU_METRICS_GROUP],
+      ['CreateLogStreamCommand', ENV.HEROKU_METRICS_GROUP],
+      ['PutLogEventsCommand', ENV.HEROKU_METRICS_GROUP],
+    ]
+  );
+
+  const metricsCommand = logsClient.calls.at(-1);
+  assert.equal(metricsCommand.input.logStreamName, 'heroku-postgres-metrics/2026-05-13');
+  assert.ok(metricsCommand.middlewareStack.identify().some(entry => entry.startsWith('emfFormatHeader')));
+
+  const [event] = metricsCommand.input.logEvents;
+  const message = JSON.parse(event.message);
+  assert.equal(event.timestamp, Date.parse('2026-05-13T08:16:55.000000+00:00'));
+  assert.equal(message._aws.CloudWatchMetrics[0].Namespace, 'Heroku/Postgres');
+  assert.deepEqual(
+    { App: message.App, Database: message.Database, Addon: message.Addon, ReadIOPS: message.ReadIOPS, WriteIOPS: message.WriteIOPS },
+    { App: 'prestage', Database: 'DATABASE', Addon: 'postgresql-curly-12345', ReadIOPS: 12.5, WriteIOPS: 3 }
+  );
+});
+
+test('handler acknowledges delivered logs when publishing metrics fails', async () => {
+  const firehoseClient = createAwsClientStub([{ FailedPutCount: 0 }]);
+  const logsClient = createAwsClientStub([{}, new Error('Metrics unavailable')]);
+  const logger = createLoggerStub();
+  const handler = createHandler({
+    firehoseClient,
+    logsClient,
+    env: ENV,
+    logger,
+    now: () => new Date('2026-05-13T12:00:00Z'),
+    knownLogStreams: new Set([`${ENV.HEROKU_LOGS_GROUP}:${ENV.HEROKU_LOGS_STREAM}/2026-05-13`]),
+  });
+
+  const response = await handler({ headers: { authorization: basicAuth() }, body: `${POSTGRES_SAMPLE_LINE}\n` });
+
+  assertDrainResponse(response, 200);
+  assert.equal(logger.errors.at(-1)[0], 'Error publishing Heroku metrics:');
+  assert.match(logger.errors.at(-1)[1].message, /Metrics unavailable/);
 });
