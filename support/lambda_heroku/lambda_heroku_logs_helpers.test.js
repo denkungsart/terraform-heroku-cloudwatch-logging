@@ -196,15 +196,10 @@ test('parseAddonSample extracts published metrics from a Heroku Postgres sample 
       WriteIOPS: 112.73,
       IopsUtilization: 0.03758,
       TableCacheHitRate: 0.99118,
-      IndexCacheHitRate: 0.99723,
-      MemoryCached: 3707032,
-      MemoryUtilization: 0.96052,
       LoadAvg1m: 0.39,
-      ActiveConnections: 92,
       WaitingConnections: 1,
       ConnectionsUtilization: 0.46,
       DbSizeUtilization: 0.02767,
-      TmpDiskUsed: 543600640,
     },
   });
 });
@@ -217,9 +212,7 @@ test('parseAddonSample extracts published metrics from a Heroku Redis sample lin
     addon: 'redis-pointy-52865',
     values: {
       MemoryUsed: 17742928,
-      ActiveConnections: 8,
       ConnectionsUtilization: 0.21053,
-      HitRate: 0.69551,
       EvictedKeys: 0,
     },
   });
@@ -280,15 +273,10 @@ test('buildMetricEvents builds EMF events for Postgres samples and allowlisted R
         { Name: 'WriteIOPS', Unit: 'Count/Second' },
         { Name: 'IopsUtilization', Unit: 'None' },
         { Name: 'TableCacheHitRate', Unit: 'None' },
-        { Name: 'IndexCacheHitRate', Unit: 'None' },
-        { Name: 'MemoryCached', Unit: 'Kilobytes' },
-        { Name: 'MemoryUtilization', Unit: 'None' },
         { Name: 'LoadAvg1m', Unit: 'None' },
-        { Name: 'ActiveConnections', Unit: 'Count' },
         { Name: 'WaitingConnections', Unit: 'Count' },
         { Name: 'ConnectionsUtilization', Unit: 'None' },
         { Name: 'DbSizeUtilization', Unit: 'None' },
-        { Name: 'TmpDiskUsed', Unit: 'Bytes' },
       ],
     }],
   });
@@ -299,8 +287,8 @@ test('buildMetricEvents builds EMF events for Postgres samples and allowlisted R
 
   assert.equal(redis._aws.CloudWatchMetrics[0].Namespace, 'Heroku/Redis');
   assert.deepEqual(
-    { App: redis.App, Database: redis.Database, Addon: redis.Addon, MemoryUsed: redis.MemoryUsed, HitRate: redis.HitRate },
-    { App: 'prestage', Database: 'REDIS', Addon: 'redis-pointy-52865', MemoryUsed: 17742928, HitRate: 0.69551 }
+    { App: redis.App, Database: redis.Database, Addon: redis.Addon, MemoryUsed: redis.MemoryUsed, EvictedKeys: redis.EvictedKeys },
+    { App: 'prestage', Database: 'REDIS', Addon: 'redis-pointy-52865', MemoryUsed: 17742928, EvictedKeys: 0 }
   );
 });
 
@@ -376,8 +364,10 @@ test('parseDynoSample reads memory utilization and load from runtime metrics lin
   });
 });
 
-test('parseDynoSample ignores router, add-on and application lines', () => {
+test('parseDynoSample ignores one-off dynos and router, add-on and application lines', () => {
   const lines = [
+    dynoLine('2026-09-26T10:00:03+00:00', 'run.1234', DYNO_MEMORY_SAMPLES),
+    dynoLine('2026-09-26T10:00:03+00:00', 'release.5678', DYNO_MEMORY_SAMPLES),
     routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" dyno=web.1 connect=0ms service=10ms status=200 bytes=1'),
     POSTGRES_SAMPLE_LINE,
     REDIS_SAMPLE_LINE,

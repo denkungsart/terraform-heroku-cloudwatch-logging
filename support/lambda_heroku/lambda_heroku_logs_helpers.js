@@ -28,31 +28,25 @@ export const DYNO_METRICS_NAMESPACE = 'Heroku/Dyno';
 export const EMF_MAX_VALUES_PER_METRIC = 100;
 
 // Heroku Postgres samples published as CloudWatch metrics, keyed by the name
-// after `sample#`. Each entry is billed as one custom metric per database.
-// Utilization metrics are fractions from 0 to 1 of the plan limit.
+// after `sample#`. Each entry is billed as one custom metric per database, so
+// only samples that dashboards or alerts use are listed. Utilization metrics
+// are fractions from 0 to 1 of the plan limit.
 export const POSTGRES_SAMPLE_METRICS = {
   'read-iops': { name: 'ReadIOPS', unit: 'Count/Second' },
   'write-iops': { name: 'WriteIOPS', unit: 'Count/Second' },
   'iops-percentage-used': { name: 'IopsUtilization', unit: 'None' },
   'table-cache-hit-rate': { name: 'TableCacheHitRate', unit: 'None' },
-  'index-cache-hit-rate': { name: 'IndexCacheHitRate', unit: 'None' },
-  'memory-cached': { name: 'MemoryCached', unit: 'Kilobytes' },
-  'memory-percentage-used': { name: 'MemoryUtilization', unit: 'None' },
   'load-avg-1m': { name: 'LoadAvg1m', unit: 'None' },
-  'active-connections': { name: 'ActiveConnections', unit: 'Count' },
   'waiting-connections': { name: 'WaitingConnections', unit: 'Count' },
   'connections-percentage-used': { name: 'ConnectionsUtilization', unit: 'None' },
   'db-size-percentage-used': { name: 'DbSizeUtilization', unit: 'None' },
-  'tmp-disk-used': { name: 'TmpDiskUsed', unit: 'Bytes' },
 };
 
 // Heroku Redis samples, published only for allowlisted add-ons. Memory and
 // load samples describe the shared host, so memory-redis is the add-on usage.
 export const REDIS_SAMPLE_METRICS = {
   'memory-redis': { name: 'MemoryUsed', unit: 'Bytes' },
-  'active-connections': { name: 'ActiveConnections', unit: 'Count' },
   'connection-percentage-used': { name: 'ConnectionsUtilization', unit: 'None' },
-  'hit-rate': { name: 'HitRate', unit: 'None' },
   'evicted-keys': { name: 'EvictedKeys', unit: 'Count' },
 };
 
@@ -65,6 +59,7 @@ export const ADDON_SAMPLE_SOURCES = {
 // Router error codes caused by clients, maintenance mode or the platform, as
 // excluded by the HerokuHTTPError alarm.
 const IGNORED_ROUTER_ERROR_CODES = new Set(['H27', 'H28', 'H31', 'H32', 'H80', 'H99']);
+const IGNORED_DYNO_TYPES = new Set(['run', 'release']);
 
 // Frame length, priority/version, timestamp, host, app, proc, msgid, message.
 const HEROKU_SYSLOG_LINE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+\s+(.*)$/;
@@ -300,6 +295,14 @@ export function parseDynoSample(line, fallbackTimestamp) {
     return null;
   }
 
+  // web.1 -> web, worker.2 -> worker, run.1234 -> run
+  const dynoType = parsed.fields.source.split('.')[0];
+
+  // One-off console and release dynos would add short-lived metrics.
+  if (IGNORED_DYNO_TYPES.has(dynoType)) {
+    return null;
+  }
+
   // parseFloat drops the MB suffix of memory samples.
   const memoryTotal = Number.parseFloat(parsed.fields['sample#memory_total']);
   const memoryQuota = Number.parseFloat(parsed.fields['sample#memory_quota']);
@@ -320,8 +323,7 @@ export function parseDynoSample(line, fallbackTimestamp) {
 
   return {
     timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
-    // web.1 -> web, worker.2 -> worker, run.1234 -> run
-    dynoType: parsed.fields.source.split('.')[0],
+    dynoType,
     values,
   };
 }
