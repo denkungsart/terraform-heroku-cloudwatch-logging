@@ -24,6 +24,7 @@ export const CLOUDWATCH_LOGS_MAX_EVENTS_PER_BATCH = 10_000;
 export const ADDON_METRICS_DIMENSIONS = ['App', 'Database', 'Addon'];
 export const ROUTER_METRICS_NAMESPACE = 'Heroku/Router';
 export const ROUTER_METRICS_DIMENSIONS = ['App'];
+export const DYNO_METRICS_NAMESPACE = 'Heroku/Dyno';
 export const EMF_MAX_VALUES_PER_METRIC = 100;
 
 // Heroku Postgres samples published as CloudWatch metrics, keyed by the name
@@ -288,6 +289,43 @@ export function parseRouterLine(line, fallbackTimestamp) {
   };
 }
 
+/**
+ * Extracts memory utilization and load from a Heroku dyno runtime metrics
+ * (log-runtime-metrics) line. Returns null for any other line.
+ */
+export function parseDynoSample(line, fallbackTimestamp) {
+  const parsed = parseHerokuSyslogLine(line);
+
+  if (!parsed || !parsed.fields.source || !parsed.fields.dyno?.startsWith('heroku.')) {
+    return null;
+  }
+
+  // parseFloat drops the MB suffix of memory samples.
+  const memoryTotal = Number.parseFloat(parsed.fields['sample#memory_total']);
+  const memoryQuota = Number.parseFloat(parsed.fields['sample#memory_quota']);
+  const loadAvg1m = Number.parseFloat(parsed.fields['sample#load_avg_1m']);
+  const values = {};
+
+  if (Number.isFinite(memoryTotal) && memoryQuota > 0) {
+    values.MemoryUtilization = memoryTotal / memoryQuota;
+  }
+
+  if (Number.isFinite(loadAvg1m)) {
+    values.LoadAvg1m = loadAvg1m;
+  }
+
+  if (Object.keys(values).length === 0) {
+    return null;
+  }
+
+  return {
+    timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
+    // web.1 -> web, worker.2 -> worker, run.1234 -> run
+    dynoType: parsed.fields.source.split('.')[0],
+    values,
+  };
+}
+
 function emfEvent(timestamp, namespace, dimensions, metrics) {
   return {
     timestamp,
@@ -350,14 +388,49 @@ function routerEvents(requests, appName) {
   });
 }
 
+// Dyno samples are published per dyno type rather than per dyno, so the
+// metric count does not grow with the formation. Maximum then shows the worst
+// dyno of a type.
+function dynoEvents(samples, appName) {
+  const byType = new Map();
+
+  for (const sample of samples) {
+    const group = byType.get(sample.dynoType) ?? { timestamp: 0, MemoryUtilization: [], LoadAvg1m: [] };
+
+    group.timestamp = Math.max(group.timestamp, sample.timestamp);
+    for (const [name, value] of Object.entries(sample.values)) {
+      group[name].push(value);
+    }
+    byType.set(sample.dynoType, group);
+  }
+
+  return [...byType].flatMap(([dynoType, group]) => {
+    const chunks = Math.max(
+      Math.ceil(group.MemoryUtilization.length / EMF_MAX_VALUES_PER_METRIC),
+      Math.ceil(group.LoadAvg1m.length / EMF_MAX_VALUES_PER_METRIC)
+    );
+
+    return Array.from({ length: chunks }, (_, index) => {
+      const slice = values => values.slice(index * EMF_MAX_VALUES_PER_METRIC, (index + 1) * EMF_MAX_VALUES_PER_METRIC);
+      const metrics = [
+        { name: 'MemoryUtilization', unit: 'None', value: slice(group.MemoryUtilization) },
+        { name: 'LoadAvg1m', unit: 'None', value: slice(group.LoadAvg1m) },
+      ].filter(metric => metric.value.length > 0);
+
+      return emfEvent(group.timestamp, DYNO_METRICS_NAMESPACE, { App: appName, DynoType: dynoType }, metrics);
+    });
+  });
+}
+
 /**
  * Builds CloudWatch embedded metric format (EMF) log events for the add-on
- * samples and router lines in the given raw log lines. Heroku Redis samples
- * are only published for the add-ons in redisAddons.
+ * samples, router lines and dyno runtime metrics in the given raw log lines.
+ * Heroku Redis samples are only published for the add-ons in redisAddons.
  */
 export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fallbackTimestamp = Date.now() }) {
   const samples = [];
   const requests = [];
+  const dynoSamples = [];
 
   for (const line of lines) {
     const sample = parseAddonSample(line, fallbackTimestamp);
@@ -373,12 +446,20 @@ export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fal
 
     if (request) {
       requests.push(request);
+      continue;
+    }
+
+    const dynoSample = parseDynoSample(line, fallbackTimestamp);
+
+    if (dynoSample) {
+      dynoSamples.push(dynoSample);
     }
   }
 
   return [
     ...samples.map(sample => addonSampleEvent(sample, appName)),
     ...routerEvents(requests, appName),
+    ...dynoEvents(dynoSamples, appName),
   ].sort((first, second) => first.timestamp - second.timestamp);
 }
 

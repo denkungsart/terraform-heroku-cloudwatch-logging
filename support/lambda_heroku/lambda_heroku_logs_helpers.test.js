@@ -15,6 +15,7 @@ import {
   FIREHOSE_MAX_RECORD_BYTES,
   parseHerokuLogTimestamp,
   parseAddonSample,
+  parseDynoSample,
   parseList,
   parseRouterLine,
   removePrefix,
@@ -36,6 +37,13 @@ const REDIS_SAMPLE_LINE = '520 <134>1 2026-09-26T10:00:01+00:00 host app heroku-
   'source=REDIS addon=redis-pointy-52865 sample#active-connections=8 sample#max-connections=38 ' +
   'sample#connection-percentage-used=0.21053 sample#load-avg-1m=0.06 sample#read-iops=12.038 sample#memory-total=16041732kB ' +
   'sample#memory-percentage-used=0.41354 sample#memory-redis=17742928bytes sample#hit-rate=0.69551 sample#evicted-keys=0';
+
+function dynoLine(timestamp, source, samples) {
+  return `300 <45>1 ${timestamp} host heroku ${source} - source=${source} dyno=heroku.123456.0a1b2c3d-4e5f ${samples}`;
+}
+
+const DYNO_MEMORY_SAMPLES = 'sample#memory_total=384.00MB sample#memory_rss=380.10MB sample#memory_cache=3.90MB ' +
+  'sample#memory_swap=0.00MB sample#memory_pgpgin=12345pages sample#memory_pgpgout=678pages sample#memory_quota=512.00MB';
 
 function routerLine(timestamp, fields) {
   return `300 <158>1 ${timestamp} host heroku router - ${fields}`;
@@ -351,6 +359,74 @@ test('buildMetricEvents splits router service times into events of at most 100 v
     messages.map(message => message._aws.CloudWatchMetrics[0].Metrics.map(metric => metric.Name)),
     [['Requests', 'ServerErrors', 'RouterErrors', 'ServiceTime'], ['ServiceTime'], ['ServiceTime']]
   );
+});
+
+test('parseDynoSample reads memory utilization and load from runtime metrics lines', () => {
+  const timestamp = '2026-09-26T10:00:05.123456+00:00';
+
+  assert.deepEqual(parseDynoSample(dynoLine(timestamp, 'web.1', DYNO_MEMORY_SAMPLES), 123), {
+    timestamp: Date.parse(timestamp),
+    dynoType: 'web',
+    values: { MemoryUtilization: 0.75 },
+  });
+  assert.deepEqual(parseDynoSample(dynoLine(timestamp, 'worker.2', 'sample#load_avg_1m=1.25 sample#load_avg_5m=0.9 sample#load_avg_15m=0.5'), 123), {
+    timestamp: Date.parse(timestamp),
+    dynoType: 'worker',
+    values: { LoadAvg1m: 1.25 },
+  });
+});
+
+test('parseDynoSample ignores router, add-on and application lines', () => {
+  const lines = [
+    routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" dyno=web.1 connect=0ms service=10ms status=200 bytes=1'),
+    POSTGRES_SAMPLE_LINE,
+    REDIS_SAMPLE_LINE,
+    '328 <190>1 2026-09-26T10:00:02+00:00 host app web.1 - source=web.1 sample#memory_total=1MB',
+  ];
+
+  for (const line of lines) {
+    assert.equal(parseDynoSample(line, 123), null, line);
+  }
+});
+
+test('buildMetricEvents publishes dyno samples per dyno type', () => {
+  const lines = [
+    dynoLine('2026-09-26T10:00:05+00:00', 'web.1', DYNO_MEMORY_SAMPLES),
+    dynoLine('2026-09-26T10:00:06+00:00', 'web.2', DYNO_MEMORY_SAMPLES.replace('memory_total=384.00MB', 'memory_total=614.40MB')),
+    dynoLine('2026-09-26T10:00:07+00:00', 'web.1', 'sample#load_avg_1m=0.5'),
+    dynoLine('2026-09-26T10:00:08+00:00', 'worker.1', 'sample#load_avg_1m=2'),
+  ];
+  const messages = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
+
+  assert.deepEqual(messages.map(message => ({
+    namespace: message._aws.CloudWatchMetrics[0].Namespace,
+    dimensions: message._aws.CloudWatchMetrics[0].Dimensions,
+    timestamp: message._aws.Timestamp,
+    App: message.App,
+    DynoType: message.DynoType,
+    MemoryUtilization: message.MemoryUtilization,
+    LoadAvg1m: message.LoadAvg1m,
+  })), [
+    {
+      namespace: 'Heroku/Dyno',
+      dimensions: [['App', 'DynoType']],
+      timestamp: Date.parse('2026-09-26T10:00:07+00:00'),
+      App: 'prestage',
+      DynoType: 'web',
+      MemoryUtilization: [0.75, 1.2],
+      LoadAvg1m: [0.5],
+    },
+    {
+      namespace: 'Heroku/Dyno',
+      dimensions: [['App', 'DynoType']],
+      timestamp: Date.parse('2026-09-26T10:00:08+00:00'),
+      App: 'prestage',
+      DynoType: 'worker',
+      MemoryUtilization: undefined,
+      LoadAvg1m: [2],
+    },
+  ]);
+  assert.deepEqual(messages[1]._aws.CloudWatchMetrics[0].Metrics, [{ Name: 'LoadAvg1m', Unit: 'None' }]);
 });
 
 test('parseList splits comma-separated values and ignores blanks', () => {
