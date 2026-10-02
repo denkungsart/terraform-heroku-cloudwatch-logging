@@ -66,6 +66,6 @@ variable "observability_sink_arns" {
 
 variable "redis_metrics_addon_names" {
   type        = list(string)
-  description = "Names of the Heroku Redis add-ons whose samples are published as Heroku/Redis CloudWatch metrics, e.g. all add-ons except mini plans. Each add-on is billed as five custom metrics. Defaults to [], which publishes none."
+  description = "Names of the Heroku Redis add-ons whose samples are published as Heroku/Redis CloudWatch metrics, e.g. the primary Redis but not a cache. Each add-on is billed as five custom metrics. Defaults to [], which publishes none."
   default     = []
 }
