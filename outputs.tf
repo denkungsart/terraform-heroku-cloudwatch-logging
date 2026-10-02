@@ -13,9 +13,9 @@ output "heroku_metrics_log_group_name" {
   value       = aws_cloudwatch_log_group.heroku_metrics.name
 }
 
-output "grafana_cloudwatch_read_role_arn" {
-  description = "Role a Grafana CloudWatch data source assumes to read metrics in this account, when grafana_workspace_role_arn is set."
-  value       = one(aws_iam_role.grafana_cloudwatch_read[*].arn)
+output "observability_link_arn" {
+  description = "ARN of the CloudWatch observability link sharing this account's metrics, when observability_sink_arns has an entry for the region."
+  value       = one(aws_oam_link.metrics[*].arn)
 }
 
 output "lambda_function_url" {

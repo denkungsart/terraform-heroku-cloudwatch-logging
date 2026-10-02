@@ -11,7 +11,6 @@ locals {
   firehose_role_name                  = local.namespace == null ? "firehose_delivery_role" : "${local.namespace}-firehose-delivery-role"
   firehose_s3_error_prefix            = local.namespace == null ? "heroku-logs-error/" : "heroku-logs-error/${local.namespace}/"
   firehose_s3_prefix                  = local.namespace == null ? "heroku-logs/" : "heroku-logs/${local.namespace}/"
-  grafana_cloudwatch_read_role_name   = local.namespace == null ? "grafana-cloudwatch-read" : "${local.namespace}-grafana-cloudwatch-read"
   heroku_logs_log_group_name          = local.namespace == null ? "/heroku/logs" : "/heroku/${local.namespace}/logs"
   heroku_logs_log_stream_name         = local.namespace == null ? "heroku-logs-stream" : "${local.namespace}-heroku-logs-stream"
   heroku_metrics_log_group_name       = local.namespace == null ? "/heroku/metrics" : "/heroku/${local.namespace}/metrics"

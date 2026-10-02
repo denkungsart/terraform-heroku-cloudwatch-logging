@@ -22,4 +22,4 @@ The handler also publishes the `sample#` metrics Heroku Postgres writes to the a
 
 Each metric is billed as one CloudWatch custom metric per database. Essential-tier databases do not log these samples, so they publish no metrics. Publishing is best effort: a failure is logged and never fails log delivery.
 
-Set `grafana_workspace_role_arn` to an Amazon Managed Grafana workspace role to create a role that Grafana's CloudWatch data source can assume to read metrics in this account. The workspace role also needs permission to assume it. The role grants metrics access only, not access to the log contents.
+Set `observability_sink_arns` to the CloudWatch cross-account observability sinks of the monitoring account, keyed by region, to link this account's metrics to the sink in the provider's region. The link shares metrics only, not the log contents. The sinks and the Grafana workspace that reads them live in [terraform-grafana](https://github.com/denkungsart/terraform-grafana).

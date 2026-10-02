@@ -42,12 +42,6 @@ variable "enable_redis_load_avg_alert" {
   default     = false
 }
 
-variable "grafana_workspace_role_arn" {
-  type        = string
-  description = "Optional ARN of an Amazon Managed Grafana workspace role, possibly in another account, allowed to assume a CloudWatch metrics read role in this account. Defaults to null, which creates no role."
-  default     = null
-}
-
 variable "heroku_app_id" {
   type        = string
   description = "The Heroku app ID to attach the log drain to."
@@ -62,4 +56,10 @@ variable "pagerduty_aws_cloudwatch_integration_key" {
   type        = string
   sensitive   = true
   description = "Service integration identifier used by PagerDuty for CloudWatch alerts."
+}
+
+variable "observability_sink_arns" {
+  type        = map(string)
+  description = "CloudWatch cross-account observability sink ARNs by region. When the provider region has an entry, this account links its metrics to that sink. Defaults to {}, which creates no link."
+  default     = {}
 }
