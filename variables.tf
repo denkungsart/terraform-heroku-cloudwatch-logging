@@ -38,7 +38,7 @@ variable "enable_rack_attack_throttle_alert" {
 
 variable "enable_redis_load_avg_alert" {
   type        = bool
-  description = "Create the Redis load average alert."
+  description = "Deprecated and ignored: the Redis load average alarm measured the shared Redis host, not the add-on, and was removed. Remove this argument from module calls."
   default     = false
 }
 
