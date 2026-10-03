@@ -213,7 +213,6 @@ test('parseAddonSample extracts published metrics from a Heroku Redis sample lin
     values: {
       MemoryUsed: 17742928,
       ConnectionsUtilization: 0.21053,
-      EvictedKeys: 0,
     },
   });
 });
@@ -287,8 +286,8 @@ test('buildMetricEvents builds EMF events for Postgres samples and allowlisted R
 
   assert.equal(redis._aws.CloudWatchMetrics[0].Namespace, 'Heroku/Redis');
   assert.deepEqual(
-    { App: redis.App, Database: redis.Database, Addon: redis.Addon, MemoryUsed: redis.MemoryUsed, EvictedKeys: redis.EvictedKeys },
-    { App: 'prestage', Database: 'REDIS', Addon: 'redis-pointy-52865', MemoryUsed: 17742928, EvictedKeys: 0 }
+    { App: redis.App, Database: redis.Database, Addon: redis.Addon, MemoryUsed: redis.MemoryUsed, ConnectionsUtilization: redis.ConnectionsUtilization },
+    { App: 'prestage', Database: 'REDIS', Addon: 'redis-pointy-52865', MemoryUsed: 17742928, ConnectionsUtilization: 0.21053 }
   );
 });
 
@@ -349,19 +348,15 @@ test('buildMetricEvents splits router service times into events of at most 100 v
   );
 });
 
-test('parseDynoSample reads memory utilization and load from runtime metrics lines', () => {
+test('parseDynoSample reads memory utilization from runtime metrics lines', () => {
   const timestamp = '2026-09-26T10:00:05.123456+00:00';
 
   assert.deepEqual(parseDynoSample(dynoLine(timestamp, 'web.1', DYNO_MEMORY_SAMPLES), 123), {
     timestamp: Date.parse(timestamp),
     dynoType: 'web',
-    values: { MemoryUtilization: 0.75 },
+    memoryUtilization: 0.75,
   });
-  assert.deepEqual(parseDynoSample(dynoLine(timestamp, 'worker.2', 'sample#load_avg_1m=1.25 sample#load_avg_5m=0.9 sample#load_avg_15m=0.5'), 123), {
-    timestamp: Date.parse(timestamp),
-    dynoType: 'worker',
-    values: { LoadAvg1m: 1.25 },
-  });
+  assert.equal(parseDynoSample(dynoLine(timestamp, 'worker.2', 'sample#load_avg_1m=1.25 sample#load_avg_5m=0.9 sample#load_avg_15m=0.5'), 123), null);
 });
 
 test('parseDynoSample ignores one-off dynos and router, add-on and application lines', () => {
@@ -379,44 +374,43 @@ test('parseDynoSample ignores one-off dynos and router, add-on and application l
   }
 });
 
-test('buildMetricEvents publishes dyno samples per dyno type', () => {
+test('buildMetricEvents publishes dyno memory per dyno type', () => {
   const lines = [
     dynoLine('2026-09-26T10:00:05+00:00', 'web.1', DYNO_MEMORY_SAMPLES),
     dynoLine('2026-09-26T10:00:06+00:00', 'web.2', DYNO_MEMORY_SAMPLES.replace('memory_total=384.00MB', 'memory_total=614.40MB')),
     dynoLine('2026-09-26T10:00:07+00:00', 'web.1', 'sample#load_avg_1m=0.5'),
-    dynoLine('2026-09-26T10:00:08+00:00', 'worker.1', 'sample#load_avg_1m=2'),
+    dynoLine('2026-09-26T10:00:08+00:00', 'worker.1', DYNO_MEMORY_SAMPLES.replace('memory_total=384.00MB', 'memory_total=1024.00MB')),
   ];
   const messages = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
 
   assert.deepEqual(messages.map(message => ({
     namespace: message._aws.CloudWatchMetrics[0].Namespace,
     dimensions: message._aws.CloudWatchMetrics[0].Dimensions,
+    metrics: message._aws.CloudWatchMetrics[0].Metrics,
     timestamp: message._aws.Timestamp,
     App: message.App,
     DynoType: message.DynoType,
     MemoryUtilization: message.MemoryUtilization,
-    LoadAvg1m: message.LoadAvg1m,
   })), [
     {
       namespace: 'Heroku/Dyno',
       dimensions: [['App', 'DynoType']],
-      timestamp: Date.parse('2026-09-26T10:00:07+00:00'),
+      metrics: [{ Name: 'MemoryUtilization', Unit: 'None' }],
+      timestamp: Date.parse('2026-09-26T10:00:06+00:00'),
       App: 'prestage',
       DynoType: 'web',
       MemoryUtilization: [0.75, 1.2],
-      LoadAvg1m: [0.5],
     },
     {
       namespace: 'Heroku/Dyno',
       dimensions: [['App', 'DynoType']],
+      metrics: [{ Name: 'MemoryUtilization', Unit: 'None' }],
       timestamp: Date.parse('2026-09-26T10:00:08+00:00'),
       App: 'prestage',
       DynoType: 'worker',
-      MemoryUtilization: undefined,
-      LoadAvg1m: [2],
+      MemoryUtilization: [2],
     },
   ]);
-  assert.deepEqual(messages[1]._aws.CloudWatchMetrics[0].Metrics, [{ Name: 'LoadAvg1m', Unit: 'None' }]);
 });
 
 test('parseList splits comma-separated values and ignores blanks', () => {
