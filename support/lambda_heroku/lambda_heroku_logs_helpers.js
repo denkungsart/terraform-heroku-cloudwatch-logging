@@ -47,7 +47,6 @@ export const POSTGRES_SAMPLE_METRICS = {
 export const REDIS_SAMPLE_METRICS = {
   'memory-redis': { name: 'MemoryUsed', unit: 'Bytes' },
   'connection-percentage-used': { name: 'ConnectionsUtilization', unit: 'None' },
-  'evicted-keys': { name: 'EvictedKeys', unit: 'Count' },
 };
 
 // Add-on sample metrics by the syslog process name of their log lines.
@@ -285,7 +284,7 @@ export function parseRouterLine(line, fallbackTimestamp) {
 }
 
 /**
- * Extracts memory utilization and load from a Heroku dyno runtime metrics
+ * Extracts memory utilization from a Heroku dyno runtime metrics
  * (log-runtime-metrics) line. Returns null for any other line.
  */
 export function parseDynoSample(line, fallbackTimestamp) {
@@ -306,25 +305,16 @@ export function parseDynoSample(line, fallbackTimestamp) {
   // parseFloat drops the MB suffix of memory samples.
   const memoryTotal = Number.parseFloat(parsed.fields['sample#memory_total']);
   const memoryQuota = Number.parseFloat(parsed.fields['sample#memory_quota']);
-  const loadAvg1m = Number.parseFloat(parsed.fields['sample#load_avg_1m']);
-  const values = {};
 
-  if (Number.isFinite(memoryTotal) && memoryQuota > 0) {
-    values.MemoryUtilization = memoryTotal / memoryQuota;
-  }
-
-  if (Number.isFinite(loadAvg1m)) {
-    values.LoadAvg1m = loadAvg1m;
-  }
-
-  if (Object.keys(values).length === 0) {
+  // Load samples are noisy on shared dynos, so only memory is published.
+  if (!Number.isFinite(memoryTotal) || !(memoryQuota > 0)) {
     return null;
   }
 
   return {
     timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
     dynoType,
-    values,
+    memoryUtilization: memoryTotal / memoryQuota,
   };
 }
 
@@ -397,31 +387,21 @@ function dynoEvents(samples, appName) {
   const byType = new Map();
 
   for (const sample of samples) {
-    const group = byType.get(sample.dynoType) ?? { timestamp: 0, MemoryUtilization: [], LoadAvg1m: [] };
+    const group = byType.get(sample.dynoType) ?? { timestamp: 0, values: [] };
 
     group.timestamp = Math.max(group.timestamp, sample.timestamp);
-    for (const [name, value] of Object.entries(sample.values)) {
-      group[name].push(value);
-    }
+    group.values.push(sample.memoryUtilization);
     byType.set(sample.dynoType, group);
   }
 
-  return [...byType].flatMap(([dynoType, group]) => {
-    const chunks = Math.max(
-      Math.ceil(group.MemoryUtilization.length / EMF_MAX_VALUES_PER_METRIC),
-      Math.ceil(group.LoadAvg1m.length / EMF_MAX_VALUES_PER_METRIC)
-    );
-
-    return Array.from({ length: chunks }, (_, index) => {
-      const slice = values => values.slice(index * EMF_MAX_VALUES_PER_METRIC, (index + 1) * EMF_MAX_VALUES_PER_METRIC);
-      const metrics = [
-        { name: 'MemoryUtilization', unit: 'None', value: slice(group.MemoryUtilization) },
-        { name: 'LoadAvg1m', unit: 'None', value: slice(group.LoadAvg1m) },
-      ].filter(metric => metric.value.length > 0);
-
-      return emfEvent(group.timestamp, DYNO_METRICS_NAMESPACE, { App: appName, DynoType: dynoType }, metrics);
-    });
-  });
+  return [...byType].flatMap(([dynoType, group]) =>
+    chunk(group.values, EMF_MAX_VALUES_PER_METRIC).map(values => emfEvent(
+      group.timestamp,
+      DYNO_METRICS_NAMESPACE,
+      { App: appName, DynoType: dynoType },
+      [{ name: 'MemoryUtilization', unit: 'None', value: values }]
+    ))
+  );
 }
 
 /**

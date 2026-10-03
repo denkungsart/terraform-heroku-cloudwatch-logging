@@ -37,22 +37,6 @@ locals {
       actions_enabled     = null
     }
 
-    redis_load_avg = {
-      enabled             = var.enable_redis_load_avg_alert
-      filter_name         = "${var.app_name}_RedisLoadAvg"
-      pattern             = "redis \"load-avg\" -\"load-avg-1m=0\" -\"load-avg-5m=0\""
-      metric_name         = "RedisLoadAverage"
-      metric_namespace    = "${local.namespace_prefix}/Redis"
-      alarm_name          = "${var.app_name}_RedisLoadAvg_Alarm"
-      comparison_operator = "GreaterThanOrEqualToThreshold"
-      threshold           = 10
-      period              = 300
-      description         = "Alert when Redis load average is non-zero repeatedly."
-      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
-      actions_enabled     = null
-    }
-
     # Excluded Heroku router codes: H27 client request interrupted, H28 client
     # connection idle, H31 misdirected request, H32 TLS certificate mismatch,
     # H80 maintenance mode, and H99 platform error.
@@ -168,22 +152,6 @@ locals {
       actions_enabled     = null
     }
 
-    postgres_load_avg = {
-      enabled             = true
-      filter_name         = "${var.app_name}_PostgresLoadAvg"
-      pattern             = "postgres \"sample#load-avg\" -\"sample#load-avg-1m=0\" -\"sample#load-avg-5m=0\""
-      metric_name         = "PostgresLoadAverage"
-      metric_namespace    = "${local.namespace_prefix}/Postgres"
-      alarm_name          = "${var.app_name}_PostgresLoadAvg_Alarm"
-      comparison_operator = "GreaterThanOrEqualToThreshold"
-      threshold           = 10
-      period              = 300
-      description         = "Alert when Postgres load average exceeds thresholds."
-      alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
-      actions_enabled     = null
-    }
-
     sentry_error = {
       enabled             = true
       filter_name         = "${var.app_name}_SentryError"
@@ -275,23 +243,6 @@ resource "aws_cloudwatch_metric_alarm" "heroku_metrics_missing_alarm" {
   treat_missing_data  = "breaching"
 }
 
-# Keep both namespace variants during the gradual Rails rollout. Remove the
-# canonical-host alarm after all installations publish under HEROKU_APP_NAME.
-resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_alarm" {
-  alarm_name          = "${var.app_name}_SidekiqQueueLatency_Alarm"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "QueueLatency"
-  namespace           = "${var.app_fqdn}/Sidekiq"
-  statistic           = "Maximum"
-  threshold           = 60
-  period              = 600
-  alarm_description   = "Alert when Sidekiq queue latency exceeds 60 seconds."
-  alarm_actions       = [aws_sns_topic.heroku_alerts.arn]
-  ok_actions          = [aws_sns_topic.heroku_alerts.arn]
-  treat_missing_data  = "notBreaching"
-}
-
 resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_app_name_alarm" {
   alarm_name          = "${var.app_name}_SidekiqQueueLatencyAppName_Alarm"
   comparison_operator = "GreaterThanThreshold"
@@ -315,11 +266,6 @@ moved {
 moved {
   from = aws_cloudwatch_log_metric_filter.redis_command_error
   to   = aws_cloudwatch_log_metric_filter.log_alarm["redis_command_error"]
-}
-
-moved {
-  from = aws_cloudwatch_log_metric_filter.redis_load_avg[0]
-  to   = aws_cloudwatch_log_metric_filter.log_alarm["redis_load_avg"]
 }
 
 moved {
@@ -358,11 +304,6 @@ moved {
 }
 
 moved {
-  from = aws_cloudwatch_log_metric_filter.postgres_load_avg
-  to   = aws_cloudwatch_log_metric_filter.log_alarm["postgres_load_avg"]
-}
-
-moved {
   from = aws_cloudwatch_log_metric_filter.sentry_error
   to   = aws_cloudwatch_log_metric_filter.log_alarm["sentry_error"]
 }
@@ -380,11 +321,6 @@ moved {
 moved {
   from = aws_cloudwatch_metric_alarm.redis_command_error_alarm
   to   = aws_cloudwatch_metric_alarm.log_alarm["redis_command_error"]
-}
-
-moved {
-  from = aws_cloudwatch_metric_alarm.redis_load_avg_alarm[0]
-  to   = aws_cloudwatch_metric_alarm.log_alarm["redis_load_avg"]
 }
 
 moved {
@@ -420,11 +356,6 @@ moved {
 moved {
   from = aws_cloudwatch_metric_alarm.api_401_unauthorized_alarm
   to   = aws_cloudwatch_metric_alarm.log_alarm["api_401_unauthorized"]
-}
-
-moved {
-  from = aws_cloudwatch_metric_alarm.postgres_load_avg_alarm
-  to   = aws_cloudwatch_metric_alarm.log_alarm["postgres_load_avg"]
 }
 
 moved {
