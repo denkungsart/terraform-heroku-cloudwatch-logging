@@ -23,6 +23,6 @@ The handler also publishes metrics extracted from the log stream. It writes them
 
 The lists live in `POSTGRES_SAMPLE_METRICS` and `REDIS_SAMPLE_METRICS` in the Lambda helpers. Each metric is billed as one CloudWatch custom metric per database, Redis add-on, dyno type or app. Publishing is best effort: a failure is logged and never fails log delivery.
 
-Set `observability_sink_arns` to the CloudWatch cross-account observability sinks of the monitoring account, keyed by region, to link this account's metrics to the sink in the provider's region. The link shares metrics only, not the log contents. The sinks and the Grafana workspace that reads them live in [terraform-grafana](https://github.com/denkungsart/terraform-grafana).
+Set `observability_sink_arns` to the CloudWatch cross-account observability sinks of the monitoring account, keyed by region, to link this account's metrics to the sink in the provider's region. The link shares metrics only, not the log contents. The sinks and the Grafana workspace that reads them live in [terraform-observability](https://github.com/denkungsart/terraform-observability).
 
 The `HerokuMetricsMissing` alarm emails when no router metrics arrive for 30 minutes, which means the drain, the Lambda or metric publishing is broken. The Lambda logs its errors to `/aws/lambda/<function name>` (30 days retention).
