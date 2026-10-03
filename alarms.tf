@@ -248,7 +248,7 @@ resource "aws_cloudwatch_metric_alarm" "sidekiq_queue_latency_app_name_alarm" {
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "QueueLatency"
-  namespace           = "${var.app_name}/Sidekiq"
+  namespace           = "${coalesce(var.heroku_app_name, var.app_name)}/Sidekiq"
   statistic           = "Maximum"
   threshold           = 60
   period              = 600

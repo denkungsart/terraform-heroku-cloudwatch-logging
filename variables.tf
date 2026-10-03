@@ -47,6 +47,12 @@ variable "heroku_app_id" {
   description = "The Heroku app ID to attach the log drain to."
 }
 
+variable "heroku_app_name" {
+  type        = string
+  description = "The Heroku app name, which Rails uses for the Sidekiq metric namespace. Defaults to app_name; set it when the Heroku app is named differently."
+  default     = null
+}
+
 variable "log_bucket_arn" {
   type        = string
   description = "ARN of the S3 bucket used for raw Heroku log archival."
