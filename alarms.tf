@@ -16,8 +16,8 @@ locals {
       threshold           = 1
       period              = local.alarm_period
       description         = "Alert when Redis memory usage is close to the limit."
-      alarm_actions       = [aws_sns_topic.heroku_alerts.arn, aws_sns_topic.pagerduty_alerts.arn]
-      ok_actions          = [aws_sns_topic.heroku_alerts.arn]
+      alarm_actions       = []
+      ok_actions          = null
       actions_enabled     = null
     }
 
@@ -179,11 +179,15 @@ locals {
       threshold           = 1
       period              = local.alarm_period
       description         = "Alert when a possible race condition in PostgreSQL type_map initialization is detected."
-      alarm_actions       = [aws_sns_topic.pagerduty_alerts.arn]
+      alarm_actions       = []
       ok_actions          = null
       actions_enabled     = null
     }
   }
+
+  # Paged by Grafana alert rules of the same name, which read the metrics of
+  # these filters. They have no CloudWatch alarm here.
+  grafana_paged_log_metrics = ["used_memory_over_limit", "postgres_race_condition"]
 
   enabled_log_metric_alarms = {
     for key, alarm in local.log_metric_alarms : key => alarm if alarm.enabled
@@ -205,8 +209,9 @@ resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
   }
 }
 
+# Some metric filters only feed Grafana alert rules and have no alarm here.
 resource "aws_cloudwatch_metric_alarm" "log_alarm" {
-  for_each = local.enabled_log_metric_alarms
+  for_each = { for key, alarm in local.enabled_log_metric_alarms : key => alarm if !contains(local.grafana_paged_log_metrics, key) }
 
   alarm_name          = each.value.alarm_name
   comparison_operator = each.value.comparison_operator
@@ -314,11 +319,6 @@ moved {
 }
 
 moved {
-  from = aws_cloudwatch_metric_alarm.used_memory_over_limit_alarm
-  to   = aws_cloudwatch_metric_alarm.log_alarm["used_memory_over_limit"]
-}
-
-moved {
   from = aws_cloudwatch_metric_alarm.redis_command_error_alarm
   to   = aws_cloudwatch_metric_alarm.log_alarm["redis_command_error"]
 }
@@ -363,7 +363,3 @@ moved {
   to   = aws_cloudwatch_metric_alarm.log_alarm["sentry_error"]
 }
 
-moved {
-  from = aws_cloudwatch_metric_alarm.postgres_race_condition_alarm
-  to   = aws_cloudwatch_metric_alarm.log_alarm["postgres_race_condition"]
-}
