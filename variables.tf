@@ -60,8 +60,9 @@ variable "log_bucket_arn" {
 
 variable "pagerduty_aws_cloudwatch_integration_key" {
   type        = string
+  description = "Deprecated and ignored: paging alerts moved to Grafana. Remove this argument from module calls."
+  default     = null
   sensitive   = true
-  description = "Service integration identifier used by PagerDuty for CloudWatch alerts."
 }
 
 variable "observability_sink_arns" {
