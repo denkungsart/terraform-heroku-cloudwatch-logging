@@ -39,3 +39,7 @@ module "observability_link_us_east_1" {
   sink_arn = data.terraform_remote_state.grafana.outputs.observability_sink_arns["us-east-1"]
 }
 ```
+
+## Paging
+
+The log filters for Redis `used_memory_over_limit` and the PostgreSQL type map race condition only feed metrics: Grafana alert rules in [terraform-observability](https://github.com/denkungsart/terraform-observability) page on them, so this module creates no CloudWatch alarm and no PagerDuty SNS topic for them. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored. The other alarms email `alert_email`.
