@@ -209,9 +209,13 @@ resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
   }
 }
 
-# Some metric filters only feed Grafana alert rules and have no alarm here.
+# Some metric filters only feed Grafana alert rules or dashboards and have no
+# alarm here.
 resource "aws_cloudwatch_metric_alarm" "log_alarm" {
-  for_each = { for key, alarm in local.enabled_log_metric_alarms : key => alarm if !contains(local.grafana_paged_log_metrics, key) }
+  for_each = {
+    for key, alarm in local.enabled_log_metric_alarms : key => alarm
+    if !contains(concat(local.grafana_paged_log_metrics, var.log_metrics_without_alarm), key)
+  }
 
   alarm_name          = each.value.alarm_name
   comparison_operator = each.value.comparison_operator

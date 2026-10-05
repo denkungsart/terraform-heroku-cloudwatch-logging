@@ -36,6 +36,21 @@ variable "enable_rack_attack_throttle_alert" {
   default     = false
 }
 
+variable "log_metrics_without_alarm" {
+  type        = list(string)
+  description = "Log alarm keys, such as rack_attack_blocklist, whose metric filter stays for dashboards but which get no CloudWatch alarm. Use it for alarms that would sit in ALARM permanently for this app."
+  default     = []
+
+  validation {
+    condition = alltrue([for key in var.log_metrics_without_alarm : contains([
+      "api_401_unauthorized", "heroku_http_error", "heroku_logplex_l10", "heroku_runtime_error",
+      "poison_pill", "rack_attack_blocklist", "rack_attack_throttle", "redis_command_error",
+      "sentry_error",
+    ], key)])
+    error_message = "log_metrics_without_alarm may only contain keys of the module's log alarms, such as rack_attack_blocklist."
+  }
+}
+
 variable "enable_redis_load_avg_alert" {
   type        = bool
   description = "Deprecated and ignored: the Redis load average alarm measured the shared Redis host, not the add-on, and was removed. Remove this argument from module calls."
