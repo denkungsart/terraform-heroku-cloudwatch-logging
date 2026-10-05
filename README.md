@@ -10,6 +10,8 @@ Set `resource_namespace` for installations that share an AWS account. When unset
 
 The Rack::Attack status=429 alarm is present but notification actions are disabled by default. Set `enable_rack_attack_throttle_alert = true` to enable those notifications.
 
+To keep a log metric for dashboards without its CloudWatch alarm, list its key in `log_metrics_without_alarm`, for example `["rack_attack_blocklist"]` for an app whose blocklist matches every day. An alarm that sits in ALARM permanently never notifies again, so it only hides new problems.
+
 `enable_redis_load_avg_alert` is deprecated and ignored.
 
 ## Heroku metrics
