@@ -17,6 +17,7 @@ import {
   parseAddonSample,
   parseDynoSample,
   parseList,
+  parseReleaseLine,
   parseRouterLine,
   removePrefix,
   stripAnsiEscapeCodes,
@@ -411,6 +412,28 @@ test('buildMetricEvents publishes dyno memory per dyno type', () => {
       MemoryUtilization: [2],
     },
   ]);
+});
+
+test('parseReleaseLine recognizes Heroku release lines only', () => {
+  const timestamp = '2026-09-26T10:00:09.123456+00:00';
+
+  assert.equal(parseReleaseLine(`120 <190>1 ${timestamp} host app api - Release v123 created by deploy@example.com`, 123), Date.parse(timestamp));
+  assert.equal(parseReleaseLine(`120 <190>1 ${timestamp} host app api - Deploy 1a2b3c4d by deploy@example.com`, 123), null);
+  assert.equal(parseReleaseLine(`120 <190>1 ${timestamp} host app web.1 - Release v123 created by deploy@example.com`, 123), null);
+});
+
+test('buildMetricEvents publishes one Releases event per release', () => {
+  const lines = [
+    '120 <190>1 2026-09-26T10:00:09+00:00 host app api - Deploy 1a2b3c4d by deploy@example.com',
+    '120 <190>1 2026-09-26T10:00:10+00:00 host app api - Release v123 created by deploy@example.com',
+  ];
+  const [event] = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 });
+  const message = JSON.parse(event.message);
+
+  assert.equal(event.timestamp, Date.parse('2026-09-26T10:00:10+00:00'));
+  assert.deepEqual(message._aws.CloudWatchMetrics, [{ Namespace: 'Heroku/App', Dimensions: [['App']], Metrics: [{ Name: 'Releases', Unit: 'Count' }] }]);
+  assert.equal(message.App, 'prestage');
+  assert.equal(message.Releases, 1);
 });
 
 test('parseList splits comma-separated values and ignores blanks', () => {
