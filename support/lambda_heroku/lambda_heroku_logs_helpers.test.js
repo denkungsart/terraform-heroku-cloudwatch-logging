@@ -35,7 +35,7 @@ const POSTGRES_SAMPLE_LINE = '520 <134>1 2026-09-26T10:00:00.000000+00:00 host a
   'sample#memory-free=159696kB sample#memory-percentage-used=0.96052 sample#memory-cached=3707032kB sample#memory-postgres=182592kB';
 
 const REDIS_SAMPLE_LINE = '520 <134>1 2026-09-26T10:00:01+00:00 host app heroku-redis - ' +
-  'source=REDIS addon=redis-pointy-52865 sample#active-connections=8 sample#max-connections=38 ' +
+  'source=REDIS addon=redis-example-12345 sample#active-connections=8 sample#max-connections=38 ' +
   'sample#connection-percentage-used=0.21053 sample#load-avg-1m=0.06 sample#read-iops=12.038 sample#memory-total=16041732kB ' +
   'sample#memory-percentage-used=0.41354 sample#memory-redis=17742928bytes sample#hit-rate=0.69551 sample#evicted-keys=0';
 
@@ -210,7 +210,7 @@ test('parseAddonSample extracts published metrics from a Heroku Redis sample lin
     proc: 'heroku-redis',
     timestamp: Date.parse('2026-09-26T10:00:01+00:00'),
     database: 'REDIS',
-    addon: 'redis-pointy-52865',
+    addon: 'redis-example-12345',
     values: {
       MemoryUsed: 17742928,
       ConnectionsUtilization: 0.21053,
@@ -253,10 +253,10 @@ test('parseRouterLine reads status, service time and relevant router errors', ()
 });
 
 test('buildMetricEvents builds EMF events for Postgres samples and allowlisted Redis add-ons only', () => {
-  const unlistedRedisLine = REDIS_SAMPLE_LINE.replace('redis-pointy-52865', 'redis-mini-1');
+  const unlistedRedisLine = REDIS_SAMPLE_LINE.replace('redis-example-12345', 'redis-mini-1');
   const events = buildMetricEvents([REDIS_SAMPLE_LINE, POSTGRES_SAMPLE_LINE, unlistedRedisLine], {
-    appName: 'prestage',
-    redisAddons: new Set(['redis-pointy-52865']),
+    appName: 'example-app',
+    redisAddons: new Set(['redis-example-12345']),
     fallbackTimestamp: 123,
   });
 
@@ -282,20 +282,20 @@ test('buildMetricEvents builds EMF events for Postgres samples and allowlisted R
   });
   assert.deepEqual(
     { App: postgres.App, Database: postgres.Database, Addon: postgres.Addon, WriteIOPS: postgres.WriteIOPS },
-    { App: 'prestage', Database: 'DATABASE', Addon: 'postgresql-curly-12345', WriteIOPS: 112.73 }
+    { App: 'example-app', Database: 'DATABASE', Addon: 'postgresql-curly-12345', WriteIOPS: 112.73 }
   );
 
   assert.equal(redis._aws.CloudWatchMetrics[0].Namespace, 'Heroku/Redis');
   assert.deepEqual(
     { App: redis.App, Database: redis.Database, Addon: redis.Addon, MemoryUsed: redis.MemoryUsed, ConnectionsUtilization: redis.ConnectionsUtilization },
-    { App: 'prestage', Database: 'REDIS', Addon: 'redis-pointy-52865', MemoryUsed: 17742928, ConnectionsUtilization: 0.21053 }
+    { App: 'example-app', Database: 'REDIS', Addon: 'redis-example-12345', MemoryUsed: 17742928, ConnectionsUtilization: 0.21053 }
   );
 });
 
 test('buildMetricEvents declares only the metrics present in a sample', () => {
   const line = '328 <134>1 2026-09-26T10:00:00.000000+00:00 host app heroku-postgres - ' +
     'source=HEROKU_POSTGRESQL_RED addon=postgresql-follower-1 sample#read-iops=4.5';
-  const [event] = buildMetricEvents([line], { appName: 'prestage', fallbackTimestamp: 123 });
+  const [event] = buildMetricEvents([line], { appName: 'example-app', fallbackTimestamp: 123 });
   const message = JSON.parse(event.message);
 
   assert.deepEqual(message._aws.CloudWatchMetrics[0].Metrics, [{ Name: 'ReadIOPS', Unit: 'Count/Second' }]);
@@ -310,7 +310,7 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
     routerLine('2026-09-26T10:00:02+00:00', 'at=info method=GET path="/" connect=0ms service=40ms status=500 bytes=1'),
     '328 <134>1 2026-09-26T10:00:02+00:00 host app web.1 - Completed 200 OK',
   ];
-  const events = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 });
+  const events = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 });
 
   assert.equal(events.length, 1);
   assert.equal(events[0].timestamp, Date.parse('2026-09-26T10:00:03+00:00'));
@@ -328,7 +328,7 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
         ],
       }],
     },
-    App: 'prestage',
+    App: 'example-app',
     Requests: 3,
     ServerErrors: 2,
     RouterErrors: 1,
@@ -339,7 +339,7 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
 test('buildMetricEvents splits router service times into events of at most 100 values', () => {
   const lines = Array.from({ length: 250 }, (_, index) =>
     routerLine('2026-09-26T10:00:01+00:00', `at=info method=GET path="/" connect=0ms service=${index}ms status=200 bytes=1`));
-  const messages = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
+  const messages = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
 
   assert.deepEqual(messages.map(message => message.ServiceTime.length), [100, 100, 50]);
   assert.deepEqual(messages.map(message => message.Requests), [250, undefined, undefined]);
@@ -382,7 +382,7 @@ test('buildMetricEvents publishes dyno memory per dyno type', () => {
     dynoLine('2026-09-26T10:00:07+00:00', 'web.1', 'sample#load_avg_1m=0.5'),
     dynoLine('2026-09-26T10:00:08+00:00', 'worker.1', DYNO_MEMORY_SAMPLES.replace('memory_total=384.00MB', 'memory_total=1024.00MB')),
   ];
-  const messages = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
+  const messages = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
 
   assert.deepEqual(messages.map(message => ({
     namespace: message._aws.CloudWatchMetrics[0].Namespace,
@@ -398,7 +398,7 @@ test('buildMetricEvents publishes dyno memory per dyno type', () => {
       dimensions: [['App', 'DynoType']],
       metrics: [{ Name: 'MemoryUtilization', Unit: 'None' }],
       timestamp: Date.parse('2026-09-26T10:00:06+00:00'),
-      App: 'prestage',
+      App: 'example-app',
       DynoType: 'web',
       MemoryUtilization: [0.75, 1.2],
     },
@@ -407,7 +407,7 @@ test('buildMetricEvents publishes dyno memory per dyno type', () => {
       dimensions: [['App', 'DynoType']],
       metrics: [{ Name: 'MemoryUtilization', Unit: 'None' }],
       timestamp: Date.parse('2026-09-26T10:00:08+00:00'),
-      App: 'prestage',
+      App: 'example-app',
       DynoType: 'worker',
       MemoryUtilization: [2],
     },
@@ -427,12 +427,12 @@ test('buildMetricEvents publishes one Releases event per release', () => {
     '120 <190>1 2026-09-26T10:00:09+00:00 host app api - Deploy 1a2b3c4d by deploy@example.com',
     '120 <190>1 2026-09-26T10:00:10+00:00 host app api - Release v123 created by deploy@example.com',
   ];
-  const [event] = buildMetricEvents(lines, { appName: 'prestage', fallbackTimestamp: 123 });
+  const [event] = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 });
   const message = JSON.parse(event.message);
 
   assert.equal(event.timestamp, Date.parse('2026-09-26T10:00:10+00:00'));
   assert.deepEqual(message._aws.CloudWatchMetrics, [{ Namespace: 'Heroku/App', Dimensions: [['App']], Metrics: [{ Name: 'Releases', Unit: 'Count' }] }]);
-  assert.equal(message.App, 'prestage');
+  assert.equal(message.App, 'example-app');
   assert.equal(message.Releases, 1);
 });
 

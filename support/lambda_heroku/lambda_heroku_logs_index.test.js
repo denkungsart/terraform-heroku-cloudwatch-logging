@@ -6,7 +6,7 @@ import test from 'node:test';
 import { createHandler } from './lambda_heroku_logs_index.js';
 
 const ENV = {
-  APP_NAME: 'prestage',
+  APP_NAME: 'example-app',
   AUTH_USERNAME: 'heroku',
   AUTH_PASSWORD: 'secret',
   FIREHOSE_STREAM_NAME: 'firehose-stream',
@@ -385,7 +385,7 @@ test('handler publishes Heroku metrics as EMF events to the metrics log group', 
   assert.equal(message._aws.CloudWatchMetrics[0].Namespace, 'Heroku/Postgres');
   assert.deepEqual(
     { App: message.App, Database: message.Database, Addon: message.Addon, ReadIOPS: message.ReadIOPS, WriteIOPS: message.WriteIOPS },
-    { App: 'prestage', Database: 'DATABASE', Addon: 'postgresql-curly-12345', ReadIOPS: 12.5, WriteIOPS: 3 }
+    { App: 'example-app', Database: 'DATABASE', Addon: 'postgresql-curly-12345', ReadIOPS: 12.5, WriteIOPS: 3 }
   );
 });
 
