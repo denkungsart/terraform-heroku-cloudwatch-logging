@@ -26,7 +26,7 @@ The handler also publishes metrics extracted from the log stream. It writes them
 
 The lists live in `POSTGRES_SAMPLE_METRICS` and `REDIS_SAMPLE_METRICS` in the Lambda helpers. Each metric is billed as one CloudWatch custom metric per database, Redis add-on, dyno type or app. Publishing is best effort: a failure is logged and never fails log delivery.
 
-Set `observability_sink_arns` to the CloudWatch cross-account observability sinks of the monitoring account, keyed by region, to link this account's metrics to the sink in the provider's region. The link shares metrics only, not the log contents. The sinks and the Grafana workspace that reads them live in [terraform-observability](https://github.com/denkungsart/terraform-observability).
+Set `observability_sink_arns` to the CloudWatch cross-account observability sinks of the monitoring account, keyed by region, to link this account's metrics to the sink in the provider's region. The link shares metrics only, not the log contents. The sinks and the Grafana workspace that reads them are managed separately, in the monitoring account.
 
 The `HerokuMetricsMissing` alarm emails when no router metrics arrive for 30 minutes, which means the drain, the Lambda or metric publishing is broken. The Lambda logs its errors to `/aws/lambda/<function name>` (30 days retention).
 
@@ -45,4 +45,4 @@ module "observability_link_us_east_1" {
 
 ## Paging
 
-The log filters for Redis `used_memory_over_limit` and the PostgreSQL type map race condition only feed metrics: Grafana alert rules in [terraform-observability](https://github.com/denkungsart/terraform-observability) page on them, so this module creates no CloudWatch alarm and no PagerDuty SNS topic for them. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored. The other alarms email `alert_email`.
+The log filters for Redis `used_memory_over_limit` and the PostgreSQL type map race condition only feed metrics: Grafana alert rules in the monitoring account page on them, so this module creates no CloudWatch alarm and no PagerDuty SNS topic for them. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored. The other alarms email `alert_email`.
