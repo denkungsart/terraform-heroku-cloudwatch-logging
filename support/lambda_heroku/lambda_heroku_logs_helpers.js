@@ -25,6 +25,7 @@ export const ADDON_METRICS_DIMENSIONS = ['App', 'Database', 'Addon'];
 export const ROUTER_METRICS_NAMESPACE = 'Heroku/Router';
 export const ROUTER_METRICS_DIMENSIONS = ['App'];
 export const DYNO_METRICS_NAMESPACE = 'Heroku/Dyno';
+export const APP_METRICS_NAMESPACE = 'Heroku/App';
 export const EMF_MAX_VALUES_PER_METRIC = 100;
 
 // Heroku Postgres samples published as CloudWatch metrics, keyed by the name
@@ -318,6 +319,21 @@ export function parseDynoSample(line, fallbackTimestamp) {
   };
 }
 
+/**
+ * Recognizes the line Heroku logs for every release, such as
+ * `app api - Release v123 created by user@example.com`. Returns its timestamp,
+ * or null for any other line.
+ */
+export function parseReleaseLine(line, fallbackTimestamp) {
+  const match = line.match(HEROKU_SYSLOG_LINE);
+
+  if (!match || match[1] !== 'api' || !/^Release v\d+ created by /.test(match[2])) {
+    return null;
+  }
+
+  return parseHerokuLogTimestamp(line, fallbackTimestamp);
+}
+
 function emfEvent(timestamp, namespace, dimensions, metrics) {
   return {
     timestamp,
@@ -406,13 +422,15 @@ function dynoEvents(samples, appName) {
 
 /**
  * Builds CloudWatch embedded metric format (EMF) log events for the add-on
- * samples, router lines and dyno runtime metrics in the given raw log lines.
+ * samples, router lines, dyno runtime metrics and releases in the given raw
+ * log lines.
  * Heroku Redis samples are only published for the add-ons in redisAddons.
  */
 export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fallbackTimestamp = Date.now() }) {
   const samples = [];
   const requests = [];
   const dynoSamples = [];
+  const releases = [];
 
   for (const line of lines) {
     const sample = parseAddonSample(line, fallbackTimestamp);
@@ -435,6 +453,13 @@ export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fal
 
     if (dynoSample) {
       dynoSamples.push(dynoSample);
+      continue;
+    }
+
+    const releaseTimestamp = parseReleaseLine(line, fallbackTimestamp);
+
+    if (releaseTimestamp !== null) {
+      releases.push(releaseTimestamp);
     }
   }
 
@@ -442,6 +467,8 @@ export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fal
     ...samples.map(sample => addonSampleEvent(sample, appName)),
     ...routerEvents(requests, appName),
     ...dynoEvents(dynoSamples, appName),
+    // Releases are rare, so each one is its own event at its own time.
+    ...releases.map(timestamp => emfEvent(timestamp, APP_METRICS_NAMESPACE, { App: appName }, [{ name: 'Releases', unit: 'Count', value: 1 }])),
   ].sort((first, second) => first.timestamp - second.timestamp);
 }
 
