@@ -22,7 +22,7 @@ The handler also publishes metrics extracted from the log stream. It writes them
 - `Heroku/Redis`, from the `sample#` lines of the Heroku Redis add-ons listed in `redis_metrics_addon_names`, with the same dimensions: `MemoryUsed` and `ConnectionsUtilization`.
 - `Heroku/Dyno`, from the [runtime metrics](https://devcenter.heroku.com/articles/log-runtime-metrics) lines, with dimensions `App` and `DynoType` (`web`, `worker`, …, but not one-off `run` and `release` dynos): `MemoryUtilization` (memory total over quota, above 1 means R14). Every dyno's value is kept, so Maximum shows the worst dyno of a type.
 - `Heroku/App`, with dimension `App`: `Releases`, one per `Release vN created by …` line, so dashboards can mark deploys.
-- `Heroku/Router`, from the router lines, with dimension `App`: `Requests`, `ServerErrors` (status 5xx), `RouterErrors` (H codes, except those the HerokuHTTPError alarm ignores), and `ServiceTime` with every request's service time, so percentiles work.
+- `Heroku/Router`, from the router lines, with dimension `App`: `Requests`, `ServerErrors` (status 5xx, except the 503s of maintenance mode, H80), `RouterErrors` (H codes, except those the HerokuHTTPError alarm ignores), and `ServiceTime` with every request's service time, so percentiles work.
 
 The lists live in `POSTGRES_SAMPLE_METRICS` and `REDIS_SAMPLE_METRICS` in the Lambda helpers. Each metric is billed as one CloudWatch custom metric per database, Redis add-on, dyno type or app. Publishing is best effort: a failure is logged and never fails log delivery.
 
