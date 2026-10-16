@@ -238,15 +238,15 @@ test('parseRouterLine reads status, service time and relevant router errors', ()
 
   assert.deepEqual(
     parseRouterLine(routerLine(timestamp, 'at=info method=GET path="/up" dyno=web.2 connect=0ms service=6ms status=302 bytes=0'), 123),
-    { timestamp: Date.parse(timestamp), status: 302, serviceMs: 6, error: false }
+    { timestamp: Date.parse(timestamp), status: 302, serviceMs: 6, serverError: false, error: false }
   );
   assert.deepEqual(
     parseRouterLine(routerLine(timestamp, 'at=error code=H12 desc="Request timeout" method=GET path="/" dyno=web.1 connect=1ms service=30000ms status=503 bytes=0'), 123),
-    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 30000, error: true }
+    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 30000, serverError: true, error: true }
   );
   assert.deepEqual(
     parseRouterLine(routerLine(timestamp, 'at=info code=H80 desc="Maintenance mode" method=GET path="/up" dyno= connect=0ms service=0ms status=503 bytes=596'), 123),
-    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 0, error: false }
+    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 0, serverError: false, error: false }
   );
   assert.equal(parseRouterLine(REDIS_SAMPLE_LINE, 123), null);
   assert.equal(parseRouterLine(routerLine(timestamp, 'at=info method=GET path="/"'), 123), null);
@@ -308,6 +308,7 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
     routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" connect=0ms service=10ms status=200 bytes=1'),
     routerLine('2026-09-26T10:00:03+00:00', 'at=error code=H12 desc="Request timeout" method=GET path="/" connect=0ms service=30000ms status=503 bytes=0'),
     routerLine('2026-09-26T10:00:02+00:00', 'at=info method=GET path="/" connect=0ms service=40ms status=500 bytes=1'),
+    routerLine('2026-09-26T10:00:02+00:00', 'at=info code=H80 desc="Maintenance mode" method=GET path="/" connect=0ms service=0ms status=503 bytes=596'),
     '328 <134>1 2026-09-26T10:00:02+00:00 host app web.1 - Completed 200 OK',
   ];
   const events = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 });
@@ -329,10 +330,10 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
       }],
     },
     App: 'example-app',
-    Requests: 3,
+    Requests: 4,
     ServerErrors: 2,
     RouterErrors: 1,
-    ServiceTime: [10, 30000, 40],
+    ServiceTime: [10, 30000, 40, 0],
   });
 });
 

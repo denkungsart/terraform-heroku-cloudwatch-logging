@@ -59,6 +59,8 @@ export const ADDON_SAMPLE_SOURCES = {
 // Router error codes caused by clients, maintenance mode or the platform, as
 // excluded by the HerokuHTTPError alarm.
 const IGNORED_ROUTER_ERROR_CODES = new Set(['H27', 'H28', 'H31', 'H32', 'H80', 'H99']);
+// Maintenance mode answers with 503, which is not a server error.
+const MAINTENANCE_MODE_CODE = 'H80';
 const IGNORED_DYNO_TYPES = new Set(['run', 'release']);
 
 // Frame length, priority/version, timestamp, host, app, proc, msgid, message.
@@ -259,7 +261,7 @@ export function parseAddonSample(line, fallbackTimestamp) {
 }
 
 /**
- * Extracts the status, service time and error state from a Heroku router log
+ * Extracts the status, service time and error states from a Heroku router log
  * line. Returns null for any other line.
  */
 export function parseRouterLine(line, fallbackTimestamp) {
@@ -280,6 +282,7 @@ export function parseRouterLine(line, fallbackTimestamp) {
     timestamp: parseHerokuLogTimestamp(line, fallbackTimestamp),
     status,
     serviceMs: Number.isFinite(serviceMs) ? serviceMs : null,
+    serverError: status >= 500 && parsed.fields.code !== MAINTENANCE_MODE_CODE,
     error: parsed.fields.at === 'error' && !IGNORED_ROUTER_ERROR_CODES.has(parsed.fields.code),
   };
 }
@@ -383,7 +386,7 @@ function routerEvents(requests, appName) {
     if (index === 0) {
       metrics.push(
         { name: 'Requests', unit: 'Count', value: requests.length },
-        { name: 'ServerErrors', unit: 'Count', value: requests.filter(request => request.status >= 500).length },
+        { name: 'ServerErrors', unit: 'Count', value: requests.filter(request => request.serverError).length },
         { name: 'RouterErrors', unit: 'Count', value: requests.filter(request => request.error).length }
       );
     }
