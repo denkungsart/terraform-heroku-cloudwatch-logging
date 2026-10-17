@@ -3,6 +3,7 @@
 
 locals {
   lambda_source_path = coalesce(var.lambda_source_path, "${path.module}/support/lambda_heroku")
+  metrics_app_name   = coalesce(var.metrics_app_name, var.app_name)
   namespace          = var.resource_namespace == null || trimspace(var.resource_namespace) == "" ? null : trimspace(var.resource_namespace)
 
   firehose_diagnostics_log_group_name = local.namespace == null ? "/firehose/diagnostics" : "/firehose/${local.namespace}/diagnostics"

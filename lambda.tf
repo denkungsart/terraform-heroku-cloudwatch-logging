@@ -52,7 +52,7 @@ module "heroku_logs_lambda" {
   local_existing_package = data.archive_file.heroku_logs_lambda.output_path
 
   environment_variables = {
-    APP_NAME              = var.app_name
+    APP_NAME              = local.metrics_app_name
     FIREHOSE_STREAM_NAME  = aws_kinesis_firehose_delivery_stream.heroku_logs_stream.name
     HEROKU_LOGS_GROUP     = aws_cloudwatch_log_group.heroku_logs.name
     HEROKU_LOGS_STREAM    = local.heroku_logs_log_stream_name

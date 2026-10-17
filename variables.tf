@@ -68,6 +68,12 @@ variable "heroku_app_name" {
   default     = null
 }
 
+variable "metrics_app_name" {
+  type        = string
+  description = "The App dimension of the metrics the log drain Lambda publishes (Heroku/Router, Heroku/Postgres, Heroku/Redis, Heroku/Dyno, Heroku/App), as Grafana shows it. Defaults to app_name; set it to name an app in Grafana without renaming the resources."
+  default     = null
+}
+
 variable "log_bucket_arn" {
   type        = string
   description = "ARN of the S3 bucket used for raw Heroku log archival."
