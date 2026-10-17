@@ -67,6 +67,8 @@ module "heroku_logs_lambda" {
   timeout       = 10
   architectures = ["arm64"]
 
+  reserved_concurrent_executions = var.lambda_reserved_concurrent_executions
+
   # Heroku drains cannot sign AWS_IAM requests, so the public Function URL uses
   # NONE here and the handler enforces Basic Auth from the drain URL credentials.
   create_lambda_function_url = true
@@ -94,7 +96,6 @@ module "heroku_logs_lambda" {
     },
     heroku_logs_cloudwatch = {
       actions = [
-        "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:PutLogEvents",
         "logs:DescribeLogStreams"
@@ -114,5 +115,6 @@ module "heroku_logs_lambda" {
 resource "heroku_drain" "app_log_drain" {
   app_id = var.heroku_app_id
 
-  url = "https://${random_string.heroku_logs_lambda_basic_auth_username.result}:${random_string.heroku_logs_lambda_basic_auth_password.result}@${trim(replace(module.heroku_logs_lambda.lambda_function_url, "https://", ""), "/")}"
+  # The URL carries the Basic Auth credentials, so it is kept out of plan output.
+  url = sensitive("https://${random_string.heroku_logs_lambda_basic_auth_username.result}:${random_string.heroku_logs_lambda_basic_auth_password.result}@${trim(replace(module.heroku_logs_lambda.lambda_function_url, "https://", ""), "/")}")
 }

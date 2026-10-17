@@ -151,9 +151,11 @@ test('handler decodes base64 bodies and writes raw logs to Firehose and processe
   });
 });
 
-test('handler retries only failed retryable Firehose records before continuing to CloudWatch', async () => {
-  const firstLine = '328 <134>1 2026-05-13T08:16:55.000000+00:00 host heroku router - first';
-  const secondLine = '328 <134>1 2026-05-13T08:16:56.000000+00:00 host heroku router - second';
+test('handler retries only failed retryable Firehose records', async () => {
+  // Lines this long do not fit into one Firehose record together.
+  const padding = 'x'.repeat(600_000);
+  const firstLine = `328 <134>1 2026-05-13T08:16:55.000000+00:00 host heroku router - first ${padding}`;
+  const secondLine = `328 <134>1 2026-05-13T08:16:56.000000+00:00 host heroku router - second ${padding}`;
   const sleepDelays = [];
   const firehoseClient = createAwsClientStub([
     {
@@ -197,11 +199,11 @@ test('handler retries only failed retryable Firehose records before continuing t
   );
   assert.deepEqual(
     logsClient.calls.map(command => command.constructor.name),
-    ['DescribeLogStreamsCommand', 'PutLogEventsCommand']
+    ['DescribeLogStreamsCommand', 'PutLogEventsCommand', 'PutLogEventsCommand']
   );
 });
 
-test('handler returns 500 and skips CloudWatch when Firehose reports non-retryable failures', async () => {
+test('handler returns 500 when Firehose reports non-retryable failures', async () => {
   const line = '328 <134>1 2026-05-13T08:16:55.000000+00:00 host heroku router - dropped';
   const logger = createLoggerStub();
   const firehoseClient = createAwsClientStub([
@@ -227,8 +229,25 @@ test('handler returns 500 and skips CloudWatch when Firehose reports non-retryab
 
   assertDrainResponse(response, 500);
   assert.match(logger.errors.at(-1)[1].message, /Failed to deliver 1 Heroku log record/);
-  assert.equal(logsClient.calls.length, 0);
+  assert.equal(logsClient.calls.at(-1).constructor.name, 'PutLogEventsCommand');
   assert.equal(logger.errors.length, 2);
+});
+
+test('handler reports both failures when Firehose and CloudWatch Logs fail', async () => {
+  const logger = createLoggerStub();
+  const handler = createHandler({
+    firehoseClient: createAwsClientStub([new Error('Firehose unavailable')]),
+    logsClient: createAwsClientStub([new Error('CloudWatch unavailable')]),
+    env: ENV,
+    logger,
+  });
+
+  const response = await handler({ headers: { authorization: basicAuth() }, body: 'line\n' });
+
+  assertDrainResponse(response, 500);
+  const error = logger.errors.at(-1)[1];
+  assert.ok(error instanceof AggregateError);
+  assert.deepEqual(error.errors.map(failure => failure.message), ['Firehose unavailable', 'CloudWatch unavailable']);
 });
 
 test('handler caches confirmed CloudWatch log streams across warm invocations', async () => {
@@ -273,7 +292,7 @@ test('handler keeps configuration and AWS failure diagnostics in logs', async t 
   const failure = new Error('Downstream delivery unavailable');
   const scenarios = [
     { name: 'missing configuration', env: {}, firehoseCalls: 0, logsCalls: 0, message: /Missing required environment/ },
-    { name: 'Firehose request failure', firehoseResponses: [failure], firehoseCalls: 1, logsCalls: 0 },
+    { name: 'Firehose request failure', firehoseResponses: [failure], firehoseCalls: 1, logsCalls: 3 },
     { name: 'CloudWatch stream lookup failure', logsResponses: [failure], firehoseCalls: 1, logsCalls: 1 },
     { name: 'CloudWatch stream creation failure', logsResponses: [{ logStreams: [] }, failure], firehoseCalls: 1, logsCalls: 2 },
     { name: 'CloudWatch delivery failure', logsResponses: [{ logStreams: [] }, {}, failure], firehoseCalls: 1, logsCalls: 3 },
@@ -317,7 +336,6 @@ test('handler returns an empty 500 after exhausting Firehose retries', async () 
   assertDrainResponse(response, 500);
   assert.equal(firehoseClient.calls.length, 4);
   assert.deepEqual(sleepDelays, [100, 200, 400]);
-  assert.equal(logsClient.calls.length, 0);
   assert.match(logger.errors.at(-1)[1].message, /Failed to deliver 1 Heroku log record/);
 });
 
@@ -338,12 +356,11 @@ test('handler waits for both downstream writes before acknowledging delivery', a
   pendingResponse.then(() => { acknowledged = true; });
 
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, ['firehose']);
+  assert.deepEqual(calls, ['firehose', 'cloudwatch']);
   assert.equal(acknowledged, false);
 
   firehoseWrite.resolve({ FailedPutCount: 0 });
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, ['firehose', 'cloudwatch']);
   assert.equal(acknowledged, false);
 
   cloudWatchWrite.resolve({});

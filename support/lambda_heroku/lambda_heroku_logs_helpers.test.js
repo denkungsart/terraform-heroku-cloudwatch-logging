@@ -89,12 +89,17 @@ test('stripAnsiEscapeCodes removes terminal color sequences', () => {
   assert.equal(stripAnsiEscapeCodes('\u001b[1;34mINFO \u001b[0mpid=2'), 'INFO pid=2');
 });
 
-test('buildFirehoseRecordBatches splits records by Firehose record count limit', () => {
-  const batches = buildFirehoseRecordBatches(Array.from({ length: 501 }, (_, index) => `line ${index}`));
+test('buildFirehoseRecordBatches packs newline-terminated lines into one record', () => {
+  assert.deepEqual(buildFirehoseRecordBatches(['first', 'second', 'third']), [
+    [{ Data: 'first\nsecond\nthird\n' }],
+  ]);
+});
 
-  assert.equal(batches.length, 2);
-  assert.equal(batches[0].length, 500);
-  assert.equal(batches[1].length, 1);
+test('buildFirehoseRecordBatches starts a new record at the Firehose record byte limit', () => {
+  const line = 'a'.repeat(600_000);
+  const batches = buildFirehoseRecordBatches([line, line, 'short']);
+
+  assert.deepEqual(batches, [[{ Data: `${line}\n` }, { Data: `${line}\nshort\n` }]]);
 });
 
 test('buildFirehoseRecordBatches splits records by Firehose request byte limit', () => {

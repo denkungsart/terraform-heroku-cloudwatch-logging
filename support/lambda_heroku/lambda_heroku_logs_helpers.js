@@ -100,10 +100,16 @@ export function stripAnsiEscapeCodes(message) {
   return message.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
 }
 
-export function buildFirehoseRecordBatches(lines) {
-  const batches = [];
-  let currentBatch = [];
-  let currentBatchBytes = 0;
+/**
+ * Packs the lines into as few Firehose records as possible, since Firehose
+ * bills every record as at least 5 KB and a drain request carries only a few
+ * short lines. Each line keeps its newline, so the archived objects are the
+ * same as with one record per line.
+ */
+function packFirehoseRecords(lines) {
+  const records = [];
+  let currentData = '';
+  let currentBytes = 0;
 
   for (const line of lines) {
     const data = `${line}\n`;
@@ -113,17 +119,40 @@ export function buildFirehoseRecordBatches(lines) {
       throw new Error(`Heroku log line exceeds Firehose record limit of ${FIREHOSE_MAX_RECORD_BYTES} bytes`);
     }
 
+    if (currentBytes + byteLength > FIREHOSE_MAX_RECORD_BYTES) {
+      records.push({ data: currentData, bytes: currentBytes });
+      currentData = '';
+      currentBytes = 0;
+    }
+
+    currentData += data;
+    currentBytes += byteLength;
+  }
+
+  if (currentBytes > 0) {
+    records.push({ data: currentData, bytes: currentBytes });
+  }
+
+  return records;
+}
+
+export function buildFirehoseRecordBatches(lines) {
+  const batches = [];
+  let currentBatch = [];
+  let currentBatchBytes = 0;
+
+  for (const record of packFirehoseRecords(lines)) {
     if (
       currentBatch.length >= FIREHOSE_MAX_RECORDS_PER_BATCH ||
-      currentBatchBytes + byteLength > FIREHOSE_MAX_BATCH_BYTES
+      currentBatchBytes + record.bytes > FIREHOSE_MAX_BATCH_BYTES
     ) {
       batches.push(currentBatch);
       currentBatch = [];
       currentBatchBytes = 0;
     }
 
-    currentBatch.push({ Data: data });
-    currentBatchBytes += byteLength;
+    currentBatch.push({ Data: record.data });
+    currentBatchBytes += record.bytes;
   }
 
   if (currentBatch.length > 0) {

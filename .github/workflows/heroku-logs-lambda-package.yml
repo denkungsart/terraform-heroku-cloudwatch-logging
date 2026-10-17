@@ -4,19 +4,20 @@ on:
   pull_request:
     paths:
       - ".github/workflows/heroku-logs-lambda-package.yml"
-      - "main.tf"
-      - "lambda.tf"
-      - "versions.tf"
+      - "**.tf"
       - "scripts/check-heroku-logs-lambda-package.sh"
       - "support/lambda_heroku/**"
   push:
+    branches:
+      - main
     paths:
       - ".github/workflows/heroku-logs-lambda-package.yml"
-      - "main.tf"
-      - "lambda.tf"
-      - "versions.tf"
+      - "**.tf"
       - "scripts/check-heroku-logs-lambda-package.sh"
       - "support/lambda_heroku/**"
+
+permissions:
+  contents: read
 
 jobs:
   validate-package:
@@ -39,11 +40,20 @@ jobs:
         with:
           terraform_version: "1.14.1"
 
+      - name: Terraform Format
+        run: terraform fmt -check -recursive -diff
+
       - name: Terraform Init
         run: terraform init -backend=false
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Validate Observability Link Submodule
+        working-directory: modules/observability-link
+        run: |
+          terraform init -backend=false
+          terraform validate
 
       - name: Validate Heroku Logs Lambda Package
         run: ./scripts/check-heroku-logs-lambda-package.sh

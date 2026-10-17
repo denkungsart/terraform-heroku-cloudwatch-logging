@@ -6,7 +6,6 @@ locals {
 
   log_metric_alarms = {
     used_memory_over_limit = {
-      enabled             = true
       filter_name         = "${var.app_name}_used_memory_over_limit"
       pattern             = "used_memory_over_limit"
       metric_name         = "UsedMemoryOverLimit"
@@ -22,7 +21,6 @@ locals {
     }
 
     redis_command_error = {
-      enabled             = true
       filter_name         = "${var.app_name}_RedisCommandError"
       pattern             = "?\"Redis::CommandError\" ?\"redis critical\""
       metric_name         = "RedisCommandError"
@@ -41,7 +39,6 @@ locals {
     # connection idle, H31 misdirected request, H32 TLS certificate mismatch,
     # H80 maintenance mode, and H99 platform error.
     heroku_http_error = {
-      enabled             = true
       filter_name         = "${var.app_name}_HerokuHTTPError"
       pattern             = "code=H -code=H27 -code=H31 -code=H32 -code=H28 -code=H80 -code=H99"
       metric_name         = "HerokuHTTPError"
@@ -57,7 +54,6 @@ locals {
     }
 
     heroku_runtime_error = {
-      enabled             = true
       filter_name         = "${var.app_name}_HerokuRuntimeError"
       pattern             = "\"Error R\" -R14 -R99 -\"(Exit timeout)\""
       metric_name         = "HerokuRuntimeError"
@@ -73,7 +69,6 @@ locals {
     }
 
     heroku_logplex_l10 = {
-      enabled             = true
       filter_name         = "${var.app_name}_HerokuLogplexL10"
       pattern             = "\"Error L10\" \"output buffer overflow\""
       metric_name         = "HerokuLogplexL10"
@@ -89,7 +84,6 @@ locals {
     }
 
     poison_pill = {
-      enabled             = true
       filter_name         = "${var.app_name}_PoisonPill"
       pattern             = "\"poison pill\""
       metric_name         = "PoisonPillKilled"
@@ -105,7 +99,6 @@ locals {
     }
 
     rack_attack_throttle = {
-      enabled             = true
       filter_name         = "${var.app_name}_RackAttackThrottle"
       pattern             = "status=429 -agentmon"
       metric_name         = "RackAttackThrottle"
@@ -121,7 +114,6 @@ locals {
     }
 
     rack_attack_blocklist = {
-      enabled             = true
       filter_name         = "${var.app_name}_RackAttackBlocklist"
       pattern             = "\"Rack::Attack\" blocklist"
       metric_name         = "RackAttackBlocklist"
@@ -137,7 +129,6 @@ locals {
     }
 
     api_401_unauthorized = {
-      enabled             = true
       filter_name         = "${var.app_name}_Api401Unauthorized"
       pattern             = "\"/api/v1\" \"status=401\""
       metric_name         = "Api401Unauthorized"
@@ -153,7 +144,6 @@ locals {
     }
 
     sentry_error = {
-      enabled             = true
       filter_name         = "${var.app_name}_SentryError"
       pattern             = "\"ERROR -- sentry:\""
       metric_name         = "SentryError"
@@ -169,7 +159,6 @@ locals {
     }
 
     postgres_race_condition = {
-      enabled             = true
       filter_name         = "${var.app_name}_PostgresRaceCondition"
       pattern             = "\"undefined method 'key?' for nil\""
       metric_name         = "PostgresRaceCondition"
@@ -188,14 +177,10 @@ locals {
   # Paged by Grafana alert rules of the same name, which read the metrics of
   # these filters. They have no CloudWatch alarm here.
   grafana_paged_log_metrics = ["used_memory_over_limit", "postgres_race_condition"]
-
-  enabled_log_metric_alarms = {
-    for key, alarm in local.log_metric_alarms : key => alarm if alarm.enabled
-  }
 }
 
 resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
-  for_each = local.enabled_log_metric_alarms
+  for_each = local.log_metric_alarms
 
   name           = each.value.filter_name
   log_group_name = aws_cloudwatch_log_group.heroku_logs.name
@@ -213,7 +198,7 @@ resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
 # alarm here.
 resource "aws_cloudwatch_metric_alarm" "log_alarm" {
   for_each = {
-    for key, alarm in local.enabled_log_metric_alarms : key => alarm
+    for key, alarm in local.log_metric_alarms : key => alarm
     if !contains(concat(local.grafana_paged_log_metrics, var.log_metrics_without_alarm), key)
   }
 

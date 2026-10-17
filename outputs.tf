@@ -9,7 +9,7 @@ output "firehose_delivery_stream_name" {
 }
 
 output "heroku_metrics_log_group_name" {
-  description = "CloudWatch Logs group receiving the EMF events for Heroku Postgres metrics."
+  description = "CloudWatch Logs group receiving the EMF events of the Heroku metrics."
   value       = aws_cloudwatch_log_group.heroku_metrics.name
 }
 

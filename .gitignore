@@ -1,5 +1,5 @@
 terraform.*
-.terraform/*
+.terraform/
 .terraform.lock.hcl
 node_modules/
 *.zip

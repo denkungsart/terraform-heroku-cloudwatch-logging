@@ -5,7 +5,8 @@ variable "app_name" {
 
 variable "app_fqdn" {
   type        = string
-  description = "The fully qualified app domain used for Lambda Function URL CORS and Sidekiq metric namespace."
+  description = "Deprecated and ignored: the module configures no CORS and names the Sidekiq namespace after heroku_app_name. Remove this argument from module calls."
+  default     = null
 }
 
 variable "alert_email" {
@@ -94,6 +95,23 @@ variable "observability_sink_arns" {
 
 variable "redis_metrics_addon_names" {
   type        = list(string)
-  description = "Names of the Heroku Redis add-ons whose samples are published as Heroku/Redis CloudWatch metrics, e.g. the primary Redis but not a cache. Each add-on is billed as five custom metrics. Defaults to [], which publishes none."
+  description = "Names of the Heroku Redis add-ons whose samples are published as Heroku/Redis CloudWatch metrics, e.g. the primary Redis but not a cache. Each add-on is billed as two custom metrics. Defaults to [], which publishes none."
   default     = []
+}
+
+variable "heroku_logs_retention_in_days" {
+  type        = number
+  description = "Retention of the Heroku logs in CloudWatch Logs. Firehose archives the raw logs to S3 independently, so a shorter retention only limits how far back Logs Insights can search."
+  default     = 60
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653], var.heroku_logs_retention_in_days)
+    error_message = "heroku_logs_retention_in_days must be a retention period that CloudWatch Logs supports, such as 14, 30 or 60."
+  }
+}
+
+variable "lambda_reserved_concurrent_executions" {
+  type        = number
+  description = "Reserved concurrency of the log drain Lambda. Its Function URL is public and rejects unauthenticated requests only after being invoked, so a limit caps what a flood of requests costs. Set it well above the peak ConcurrentExecutions of the function, since throttled drain requests lose logs. Defaults to -1, which sets no limit."
+  default     = -1
 }

@@ -236,15 +236,25 @@ export function createHandler({
       const lines = body.split('\n').filter(line => line.trim() !== '');
 
       if (lines.length > 0) {
-        // --- Send raw logs to Firehose for S3 archival ---
-        await sendLogsToFirehose(lines);
+        // Raw logs go to Firehose for S3 archival and processed (prefix removed)
+        // logs to CloudWatch Logs. Both writes run concurrently, which shortens
+        // the billed duration, and the request is acknowledged only after both.
+        const results = await Promise.allSettled([
+          sendLogsToFirehose(lines),
+          sendLogsToCloudWatch(
+            env.HEROKU_LOGS_GROUP,   // e.g., "/heroku/logs"
+            buildLogStreamName(env.HEROKU_LOGS_STREAM, now()),
+            lines
+          ),
+        ]);
+        const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
 
-        // --- Send processed (prefix removed) logs to CloudWatch Logs ---
-        await sendLogsToCloudWatch(
-          env.HEROKU_LOGS_GROUP,   // e.g., "/heroku/logs"
-          buildLogStreamName(env.HEROKU_LOGS_STREAM, now()),
-          lines
-        );
+        if (failures.length === 1) {
+          throw failures[0];
+        }
+        if (failures.length > 1) {
+          throw new AggregateError(failures, 'Firehose and CloudWatch Logs delivery failed');
+        }
 
         // Metrics are best effort, so a metrics failure never fails the drain
         // request after the logs themselves were delivered.
