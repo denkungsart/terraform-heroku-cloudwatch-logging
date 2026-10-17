@@ -1,7 +1,7 @@
 # Log Metric Filters and Alarms
 # -------------------------------------------------------------------------------
 locals {
-  namespace_prefix = "Heroku/${var.app_name}"
+  namespace_prefix = "Heroku/${local.metrics_app_name}"
   alarm_period     = 60 # Period in seconds
 
   log_metric_alarms = {

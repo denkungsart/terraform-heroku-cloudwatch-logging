@@ -70,7 +70,7 @@ variable "heroku_app_name" {
 
 variable "metrics_app_name" {
   type        = string
-  description = "The App dimension of the metrics the log drain Lambda publishes (Heroku/Router, Heroku/Postgres, Heroku/Redis, Heroku/Dyno, Heroku/App), as Grafana shows it. Defaults to app_name; set it to name an app in Grafana without renaming the resources."
+  description = "The app's name in its metrics, as Grafana shows it: the App dimension of the metrics the log drain Lambda publishes (Heroku/Router, Heroku/Postgres, Heroku/Redis, Heroku/Dyno, Heroku/App) and the Heroku/<name>/... namespace of the log metric filters. Defaults to app_name; set it to name an app in Grafana without renaming the resources."
   default     = null
 }
 
