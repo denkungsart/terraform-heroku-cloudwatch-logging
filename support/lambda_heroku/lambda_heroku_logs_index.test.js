@@ -389,6 +389,40 @@ test('handler publishes Heroku metrics as EMF events to the metrics log group', 
   );
 });
 
+test('handler collects router metrics across warm invocations and publishes them after a minute', async () => {
+  const logsClient = createAwsClientStub();
+  let currentTime = new Date('2026-05-13T12:00:00Z');
+  const handler = createHandler({
+    firehoseClient: createAwsClientStub(),
+    logsClient,
+    env: ENV,
+    logger: createLoggerStub(),
+    now: () => currentTime,
+    knownLogStreams: new Set([
+      `${ENV.HEROKU_LOGS_GROUP}:${ENV.HEROKU_LOGS_STREAM}/2026-05-13`,
+      `${ENV.HEROKU_METRICS_GROUP}:${ENV.HEROKU_METRICS_STREAM}/2026-05-13`,
+    ]),
+  });
+  const routerLine = (timestamp, service, status) =>
+    `300 <158>1 ${timestamp} host heroku router - at=info method=GET path="/" connect=0ms service=${service}ms status=${status} bytes=1`;
+  const metricsWrites = () => logsClient.calls.filter(command => command.input.logGroupName === ENV.HEROKU_METRICS_GROUP);
+
+  await handler({ headers: { authorization: basicAuth() }, body: `${routerLine('2026-05-13T11:59:59.900000+00:00', 10, 200)}\n` });
+  currentTime = new Date('2026-05-13T12:00:30Z');
+  await handler({ headers: { authorization: basicAuth() }, body: `${routerLine('2026-05-13T12:00:29.900000+00:00', 20, 500)}\n` });
+  assert.equal(metricsWrites().length, 0);
+
+  currentTime = new Date('2026-05-13T12:01:00Z');
+  await handler({ headers: { authorization: basicAuth() }, body: `${routerLine('2026-05-13T12:00:59.900000+00:00', 30, 200)}\n` });
+
+  const [write] = metricsWrites();
+  assert.equal(metricsWrites().length, 1);
+  assert.deepEqual(
+    write.input.logEvents.map(event => JSON.parse(event.message)).map(message => [message.Requests, message.ServerErrors, message.ServiceTime]),
+    [[1, 0, [10]], [2, 1, [20, 30]]]
+  );
+});
+
 test('handler acknowledges delivered logs when publishing metrics fails', async () => {
   const firehoseClient = createAwsClientStub([{ FailedPutCount: 0 }]);
   const logsClient = createAwsClientStub([{}, new Error('Metrics unavailable')]);

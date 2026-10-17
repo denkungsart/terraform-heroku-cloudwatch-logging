@@ -13,8 +13,11 @@ import {
   buildFirehoseRecordBatches,
   buildLogStreamName,
   buildMetricEvents,
+  buildRouterEvents,
   emfFormatHeaderMiddleware,
   parseList,
+  parseRouterRequests,
+  RouterRequestBuffer,
   validateBasicAuth,
   validateRequiredEnv,
 } from './lambda_heroku_logs_helpers.js';
@@ -63,6 +66,7 @@ export function createHandler({
   now = () => new Date(),
   sleepFn = sleep,
   knownLogStreams = new Set(),
+  routerRequests = new RouterRequestBuffer(),
 } = {}) {
   /**
    * Sends an array of processed log messages (plain text) to CloudWatch Logs.
@@ -127,17 +131,25 @@ export function createHandler({
   }
 
   /**
-   * Publishes Heroku add-on samples and router metrics as CloudWatch metrics
-   * by writing EMF events to the metrics log group.
+   * Publishes Heroku add-on samples, dyno and release metrics and the router
+   * metrics collected in this container so far as CloudWatch metrics by
+   * writing EMF events to the metrics log group.
    *
    * @param {string[]} lines - Array of raw log lines.
    */
   async function sendMetrics(lines) {
-    const events = buildMetricEvents(lines, {
-      appName: env.APP_NAME,
-      redisAddons: parseList(env.REDIS_METRICS_ADDONS),
-      fallbackTimestamp: now().getTime(),
-    });
+    const currentTime = now().getTime();
+
+    routerRequests.add(parseRouterRequests(lines, currentTime), currentTime);
+
+    const events = [
+      ...buildMetricEvents(lines, {
+        appName: env.APP_NAME,
+        redisAddons: parseList(env.REDIS_METRICS_ADDONS),
+        fallbackTimestamp: currentTime,
+      }),
+      ...buildRouterEvents(routerRequests.take(currentTime), env.APP_NAME),
+    ].sort((first, second) => first.timestamp - second.timestamp);
 
     if (events.length === 0) {
       return;

@@ -9,6 +9,7 @@ import {
   buildFirehoseRecordBatches,
   buildLogStreamName,
   buildMetricEvents,
+  buildRouterEvents,
   chunk,
   CLOUDWATCH_LOGS_MAX_EVENT_MESSAGE_BYTES,
   emfFormatHeaderMiddleware,
@@ -19,7 +20,9 @@ import {
   parseList,
   parseReleaseLine,
   parseRouterLine,
+  parseRouterRequests,
   removePrefix,
+  RouterRequestBuffer,
   stripAnsiEscapeCodes,
   validateBasicAuth,
   validateRequiredEnv,
@@ -198,7 +201,6 @@ test('parseAddonSample extracts published metrics from a Heroku Postgres sample 
       IopsUtilization: 0.03758,
       TableCacheHitRate: 0.99118,
       LoadAvg1m: 0.39,
-      WaitingConnections: 1,
       ConnectionsUtilization: 0.46,
       DbSizeUtilization: 0.02767,
     },
@@ -233,20 +235,20 @@ test('parseAddonSample ignores lines that are not add-on samples', () => {
   }
 });
 
-test('parseRouterLine reads status, service time and relevant router errors', () => {
+test('parseRouterLine reads status, service time and server errors', () => {
   const timestamp = '2026-09-26T10:00:02.123456+00:00';
 
   assert.deepEqual(
     parseRouterLine(routerLine(timestamp, 'at=info method=GET path="/up" dyno=web.2 connect=0ms service=6ms status=302 bytes=0'), 123),
-    { timestamp: Date.parse(timestamp), status: 302, serviceMs: 6, serverError: false, error: false }
+    { timestamp: Date.parse(timestamp), status: 302, serviceMs: 6, serverError: false }
   );
   assert.deepEqual(
     parseRouterLine(routerLine(timestamp, 'at=error code=H12 desc="Request timeout" method=GET path="/" dyno=web.1 connect=1ms service=30000ms status=503 bytes=0'), 123),
-    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 30000, serverError: true, error: true }
+    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 30000, serverError: true }
   );
   assert.deepEqual(
     parseRouterLine(routerLine(timestamp, 'at=info code=H80 desc="Maintenance mode" method=GET path="/up" dyno= connect=0ms service=0ms status=503 bytes=596'), 123),
-    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 0, serverError: false, error: false }
+    { timestamp: Date.parse(timestamp), status: 503, serviceMs: 0, serverError: false }
   );
   assert.equal(parseRouterLine(REDIS_SAMPLE_LINE, 123), null);
   assert.equal(parseRouterLine(routerLine(timestamp, 'at=info method=GET path="/"'), 123), null);
@@ -274,7 +276,6 @@ test('buildMetricEvents builds EMF events for Postgres samples and allowlisted R
         { Name: 'IopsUtilization', Unit: 'None' },
         { Name: 'TableCacheHitRate', Unit: 'None' },
         { Name: 'LoadAvg1m', Unit: 'None' },
-        { Name: 'WaitingConnections', Unit: 'Count' },
         { Name: 'ConnectionsUtilization', Unit: 'None' },
         { Name: 'DbSizeUtilization', Unit: 'None' },
       ],
@@ -303,15 +304,36 @@ test('buildMetricEvents declares only the metrics present in a sample', () => {
   assert.equal(message.ReadIOPS, 4.5);
 });
 
-test('buildMetricEvents aggregates the router lines of a request into one event', () => {
+test('buildMetricEvents leaves router lines to buildRouterEvents', () => {
+  const lines = [
+    routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" connect=0ms service=10ms status=200 bytes=1'),
+    POSTGRES_SAMPLE_LINE,
+  ];
+  const events = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 });
+
+  assert.deepEqual(events.map(event => JSON.parse(event.message)._aws.CloudWatchMetrics[0].Namespace), ['Heroku/Postgres']);
+});
+
+test('parseRouterRequests keeps the router lines of a drain request', () => {
+  const lines = [
+    routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" connect=0ms service=10ms status=200 bytes=1'),
+    '328 <134>1 2026-09-26T10:00:02+00:00 host app web.1 - Completed 200 OK',
+    POSTGRES_SAMPLE_LINE,
+  ];
+
+  assert.deepEqual(parseRouterRequests(lines, 123), [
+    { timestamp: Date.parse('2026-09-26T10:00:01+00:00'), status: 200, serviceMs: 10, serverError: false },
+  ]);
+});
+
+test('buildRouterEvents aggregates the requests of a minute into one event', () => {
   const lines = [
     routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" connect=0ms service=10ms status=200 bytes=1'),
     routerLine('2026-09-26T10:00:03+00:00', 'at=error code=H12 desc="Request timeout" method=GET path="/" connect=0ms service=30000ms status=503 bytes=0'),
     routerLine('2026-09-26T10:00:02+00:00', 'at=info method=GET path="/" connect=0ms service=40ms status=500 bytes=1'),
     routerLine('2026-09-26T10:00:02+00:00', 'at=info code=H80 desc="Maintenance mode" method=GET path="/" connect=0ms service=0ms status=503 bytes=596'),
-    '328 <134>1 2026-09-26T10:00:02+00:00 host app web.1 - Completed 200 OK',
   ];
-  const events = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 });
+  const events = buildRouterEvents(parseRouterRequests(lines, 123), 'example-app');
 
   assert.equal(events.length, 1);
   assert.equal(events[0].timestamp, Date.parse('2026-09-26T10:00:03+00:00'));
@@ -324,7 +346,6 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
         Metrics: [
           { Name: 'Requests', Unit: 'Count' },
           { Name: 'ServerErrors', Unit: 'Count' },
-          { Name: 'RouterErrors', Unit: 'Count' },
           { Name: 'ServiceTime', Unit: 'Milliseconds' },
         ],
       }],
@@ -332,22 +353,64 @@ test('buildMetricEvents aggregates the router lines of a request into one event'
     App: 'example-app',
     Requests: 4,
     ServerErrors: 2,
-    RouterErrors: 1,
     ServiceTime: [10, 30000, 40, 0],
   });
 });
 
-test('buildMetricEvents splits router service times into events of at most 100 values', () => {
+test('buildRouterEvents publishes the counts of each minute separately', () => {
+  const lines = [
+    routerLine('2026-09-26T10:00:59+00:00', 'at=info method=GET path="/" connect=0ms service=10ms status=200 bytes=1'),
+    routerLine('2026-09-26T10:01:00+00:00', 'at=info method=GET path="/" connect=0ms service=20ms status=500 bytes=1'),
+    routerLine('2026-09-26T10:01:30+00:00', 'at=info method=GET path="/" connect=0ms service=30ms status=200 bytes=1'),
+  ];
+  const messages = buildRouterEvents(parseRouterRequests(lines, 123), 'example-app').map(event => JSON.parse(event.message));
+
+  assert.deepEqual(
+    messages.map(message => [message._aws.Timestamp, message.Requests, message.ServerErrors, message.ServiceTime]),
+    [
+      [Date.parse('2026-09-26T10:00:59+00:00'), 1, 0, [10]],
+      [Date.parse('2026-09-26T10:01:30+00:00'), 2, 1, [20, 30]],
+    ]
+  );
+});
+
+test('buildRouterEvents splits router service times into events of at most 100 values', () => {
   const lines = Array.from({ length: 250 }, (_, index) =>
     routerLine('2026-09-26T10:00:01+00:00', `at=info method=GET path="/" connect=0ms service=${index}ms status=200 bytes=1`));
-  const messages = buildMetricEvents(lines, { appName: 'example-app', fallbackTimestamp: 123 }).map(event => JSON.parse(event.message));
+  const messages = buildRouterEvents(parseRouterRequests(lines, 123), 'example-app').map(event => JSON.parse(event.message));
 
   assert.deepEqual(messages.map(message => message.ServiceTime.length), [100, 100, 50]);
   assert.deepEqual(messages.map(message => message.Requests), [250, undefined, undefined]);
   assert.deepEqual(
     messages.map(message => message._aws.CloudWatchMetrics[0].Metrics.map(metric => metric.Name)),
-    [['Requests', 'ServerErrors', 'RouterErrors', 'ServiceTime'], ['ServiceTime'], ['ServiceTime']]
+    [['Requests', 'ServerErrors', 'ServiceTime'], ['ServiceTime'], ['ServiceTime']]
   );
+});
+
+test('RouterRequestBuffer hands out requests once the oldest waited for the interval', () => {
+  const buffer = new RouterRequestBuffer({ intervalMs: 60_000, maxRequests: 10 });
+
+  assert.deepEqual(buffer.take(0), []);
+  buffer.add([{ id: 1 }], 1_000);
+  buffer.add([], 2_000);
+  buffer.add([{ id: 2 }, { id: 3 }], 30_000);
+  assert.deepEqual(buffer.take(60_999), []);
+  assert.deepEqual(buffer.take(61_000), [{ id: 1 }, { id: 2 }, { id: 3 }]);
+  assert.deepEqual(buffer.take(200_000), []);
+
+  // The interval starts again with the next request.
+  buffer.add([{ id: 4 }], 200_000);
+  assert.deepEqual(buffer.take(259_999), []);
+  assert.deepEqual(buffer.take(260_000), [{ id: 4 }]);
+});
+
+test('RouterRequestBuffer hands out requests early when it is full', () => {
+  const buffer = new RouterRequestBuffer({ intervalMs: 60_000, maxRequests: 3 });
+
+  buffer.add([{ id: 1 }, { id: 2 }], 0);
+  assert.deepEqual(buffer.take(1), []);
+  buffer.add([{ id: 3 }], 2);
+  assert.deepEqual(buffer.take(3), [{ id: 1 }, { id: 2 }, { id: 3 }]);
 });
 
 test('parseDynoSample reads memory utilization from runtime metrics lines', () => {
@@ -361,10 +424,11 @@ test('parseDynoSample reads memory utilization from runtime metrics lines', () =
   assert.equal(parseDynoSample(dynoLine(timestamp, 'worker.2', 'sample#load_avg_1m=1.25 sample#load_avg_5m=0.9 sample#load_avg_15m=0.5'), 123), null);
 });
 
-test('parseDynoSample ignores one-off dynos and router, add-on and application lines', () => {
+test('parseDynoSample ignores one-off and scheduler dynos and router, add-on and application lines', () => {
   const lines = [
     dynoLine('2026-09-26T10:00:03+00:00', 'run.1234', DYNO_MEMORY_SAMPLES),
     dynoLine('2026-09-26T10:00:03+00:00', 'release.5678', DYNO_MEMORY_SAMPLES),
+    dynoLine('2026-09-26T10:00:03+00:00', 'scheduler.4321', DYNO_MEMORY_SAMPLES),
     routerLine('2026-09-26T10:00:01+00:00', 'at=info method=GET path="/" dyno=web.1 connect=0ms service=10ms status=200 bytes=1'),
     POSTGRES_SAMPLE_LINE,
     REDIS_SAMPLE_LINE,
