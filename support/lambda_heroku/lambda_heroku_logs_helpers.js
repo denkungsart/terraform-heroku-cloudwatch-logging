@@ -27,6 +27,11 @@ export const ROUTER_METRICS_DIMENSIONS = ['App'];
 export const DYNO_METRICS_NAMESPACE = 'Heroku/Dyno';
 export const APP_METRICS_NAMESPACE = 'Heroku/App';
 export const EMF_MAX_VALUES_PER_METRIC = 100;
+// A drain request often carries a single router line, so warm Lambda
+// containers collect router requests for this long before publishing them.
+export const ROUTER_METRICS_INTERVAL_MS = 60_000;
+export const ROUTER_METRICS_MAX_BUFFERED_REQUESTS = 10_000;
+const MINUTE_MS = 60_000;
 
 // Heroku Postgres samples published as CloudWatch metrics, keyed by the name
 // after `sample#`. Each entry is billed as one custom metric per database, so
@@ -38,7 +43,6 @@ export const POSTGRES_SAMPLE_METRICS = {
   'iops-percentage-used': { name: 'IopsUtilization', unit: 'None' },
   'table-cache-hit-rate': { name: 'TableCacheHitRate', unit: 'None' },
   'load-avg-1m': { name: 'LoadAvg1m', unit: 'None' },
-  'waiting-connections': { name: 'WaitingConnections', unit: 'Count' },
   'connections-percentage-used': { name: 'ConnectionsUtilization', unit: 'None' },
   'db-size-percentage-used': { name: 'DbSizeUtilization', unit: 'None' },
 };
@@ -56,12 +60,11 @@ export const ADDON_SAMPLE_SOURCES = {
   'heroku-redis': { namespace: 'Heroku/Redis', metrics: REDIS_SAMPLE_METRICS },
 };
 
-// Router error codes caused by clients, maintenance mode or the platform, as
-// excluded by the HerokuHTTPError alarm.
-const IGNORED_ROUTER_ERROR_CODES = new Set(['H27', 'H28', 'H31', 'H32', 'H80', 'H99']);
 // Maintenance mode answers with 503, which is not a server error.
 const MAINTENANCE_MODE_CODE = 'H80';
-const IGNORED_DYNO_TYPES = new Set(['run', 'release']);
+// One-off console, release and Heroku Scheduler dynos would add short-lived
+// metrics.
+const IGNORED_DYNO_TYPES = new Set(['run', 'release', 'scheduler']);
 
 // Frame length, priority/version, timestamp, host, app, proc, msgid, message.
 const HEROKU_SYSLOG_LINE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+\s+(.*)$/;
@@ -261,8 +264,8 @@ export function parseAddonSample(line, fallbackTimestamp) {
 }
 
 /**
- * Extracts the status, service time and error states from a Heroku router log
- * line. Returns null for any other line.
+ * Extracts the status, service time and server error state from a Heroku
+ * router log line. Returns null for any other line.
  */
 export function parseRouterLine(line, fallbackTimestamp) {
   const parsed = parseHerokuSyslogLine(line);
@@ -283,7 +286,6 @@ export function parseRouterLine(line, fallbackTimestamp) {
     status,
     serviceMs: Number.isFinite(serviceMs) ? serviceMs : null,
     serverError: status >= 500 && parsed.fields.code !== MAINTENANCE_MODE_CODE,
-    error: parsed.fields.at === 'error' && !IGNORED_ROUTER_ERROR_CODES.has(parsed.fields.code),
   };
 }
 
@@ -301,7 +303,6 @@ export function parseDynoSample(line, fallbackTimestamp) {
   // web.1 -> web, worker.2 -> worker, run.1234 -> run
   const dynoType = parsed.fields.source.split('.')[0];
 
-  // One-off console and release dynos would add short-lived metrics.
   if (IGNORED_DYNO_TYPES.has(dynoType)) {
     return null;
   }
@@ -368,35 +369,95 @@ function addonSampleEvent(sample, appName) {
   );
 }
 
-// One drain request carries many router lines, so the router metrics of a
-// request go into one event. EMF allows 100 values per metric, so service
-// times beyond that go into further events.
-function routerEvents(requests, appName) {
-  if (requests.length === 0) {
-    return [];
+/**
+ * Parses the router lines among the given raw log lines.
+ */
+export function parseRouterRequests(lines, fallbackTimestamp = Date.now()) {
+  return lines.map(line => parseRouterLine(line, fallbackTimestamp)).filter(request => request !== null);
+}
+
+/**
+ * Builds the router EMF events for the given requests: one event per minute
+ * of request time with the counts, so per-minute graphs stay accurate. EMF
+ * allows 100 values per metric, so service times beyond that go into further
+ * events of the same minute.
+ */
+export function buildRouterEvents(requests, appName) {
+  const byMinute = new Map();
+
+  for (const request of requests) {
+    const minute = Math.floor(request.timestamp / MINUTE_MS);
+    const group = byMinute.get(minute) ?? [];
+
+    group.push(request);
+    byMinute.set(minute, group);
   }
 
-  const timestamp = Math.max(...requests.map(request => request.timestamp));
-  const serviceTimes = requests.map(request => request.serviceMs).filter(value => value !== null);
-  const serviceTimeChunks = serviceTimes.length > 0 ? chunk(serviceTimes, EMF_MAX_VALUES_PER_METRIC) : [[]];
+  return [...byMinute.values()].flatMap(group => {
+    const timestamp = Math.max(...group.map(request => request.timestamp));
+    const serviceTimes = group.map(request => request.serviceMs).filter(value => value !== null);
+    const serviceTimeChunks = serviceTimes.length > 0 ? chunk(serviceTimes, EMF_MAX_VALUES_PER_METRIC) : [[]];
 
-  return serviceTimeChunks.map((values, index) => {
-    const metrics = [];
+    return serviceTimeChunks.map((values, index) => {
+      const metrics = [];
 
-    if (index === 0) {
-      metrics.push(
-        { name: 'Requests', unit: 'Count', value: requests.length },
-        { name: 'ServerErrors', unit: 'Count', value: requests.filter(request => request.serverError).length },
-        { name: 'RouterErrors', unit: 'Count', value: requests.filter(request => request.error).length }
-      );
-    }
+      if (index === 0) {
+        metrics.push(
+          { name: 'Requests', unit: 'Count', value: group.length },
+          { name: 'ServerErrors', unit: 'Count', value: group.filter(request => request.serverError).length }
+        );
+      }
 
-    if (values.length > 0) {
-      metrics.push({ name: 'ServiceTime', unit: 'Milliseconds', value: values });
-    }
+      if (values.length > 0) {
+        metrics.push({ name: 'ServiceTime', unit: 'Milliseconds', value: values });
+      }
 
-    return emfEvent(timestamp, ROUTER_METRICS_NAMESPACE, { App: appName }, metrics);
+      return emfEvent(timestamp, ROUTER_METRICS_NAMESPACE, { App: appName }, metrics);
+    });
   });
+}
+
+/**
+ * Collects router requests across the invocations of a warm Lambda container.
+ * Busy apps send about one router line per drain request, and an EMF event
+ * per request made metric ingestion the largest cost. take() hands out the
+ * requests once the oldest waited for the interval or the buffer is full;
+ * requests of a container that is shut down before are lost, as metrics are
+ * best effort.
+ */
+export class RouterRequestBuffer {
+  constructor({ intervalMs = ROUTER_METRICS_INTERVAL_MS, maxRequests = ROUTER_METRICS_MAX_BUFFERED_REQUESTS } = {}) {
+    this.intervalMs = intervalMs;
+    this.maxRequests = maxRequests;
+    this.requests = [];
+    this.startedAt = null;
+  }
+
+  add(requests, now) {
+    if (requests.length === 0) {
+      return;
+    }
+
+    this.startedAt ??= now;
+    for (const request of requests) {
+      this.requests.push(request);
+    }
+  }
+
+  take(now) {
+    if (this.requests.length === 0) {
+      return [];
+    }
+
+    if (now - this.startedAt < this.intervalMs && this.requests.length < this.maxRequests) {
+      return [];
+    }
+
+    const requests = this.requests;
+    this.requests = [];
+    this.startedAt = null;
+    return requests;
+  }
 }
 
 // Dyno samples are published per dyno type rather than per dyno, so the
@@ -425,13 +486,12 @@ function dynoEvents(samples, appName) {
 
 /**
  * Builds CloudWatch embedded metric format (EMF) log events for the add-on
- * samples, router lines, dyno runtime metrics and releases in the given raw
- * log lines.
+ * samples, dyno runtime metrics and releases in the given raw log lines.
+ * Router lines are collected separately (see RouterRequestBuffer).
  * Heroku Redis samples are only published for the add-ons in redisAddons.
  */
 export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fallbackTimestamp = Date.now() }) {
   const samples = [];
-  const requests = [];
   const dynoSamples = [];
   const releases = [];
 
@@ -442,13 +502,6 @@ export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fal
       if (sample.proc !== 'heroku-redis' || redisAddons.has(sample.addon)) {
         samples.push(sample);
       }
-      continue;
-    }
-
-    const request = parseRouterLine(line, fallbackTimestamp);
-
-    if (request) {
-      requests.push(request);
       continue;
     }
 
@@ -468,7 +521,6 @@ export function buildMetricEvents(lines, { appName, redisAddons = new Set(), fal
 
   return [
     ...samples.map(sample => addonSampleEvent(sample, appName)),
-    ...routerEvents(requests, appName),
     ...dynoEvents(dynoSamples, appName),
     // Releases are rare, so each one is its own event at its own time.
     ...releases.map(timestamp => emfEvent(timestamp, APP_METRICS_NAMESPACE, { App: appName }, [{ name: 'Releases', unit: 'Count', value: 1 }])),
