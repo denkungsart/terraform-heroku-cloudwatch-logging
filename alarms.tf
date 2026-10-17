@@ -242,7 +242,7 @@ resource "aws_cloudwatch_metric_alarm" "heroku_metrics_missing_alarm" {
   evaluation_periods  = 6
   metric_name         = "Requests"
   namespace           = "Heroku/Router"
-  dimensions          = { App = var.app_name }
+  dimensions          = { App = local.metrics_app_name }
   statistic           = "Sum"
   threshold           = 1
   period              = 300
