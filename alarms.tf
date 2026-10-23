@@ -177,6 +177,11 @@ locals {
   # Paged by Grafana alert rules of the same name, which read the metrics of
   # these filters. They have no CloudWatch alarm here.
   grafana_paged_log_metrics = ["used_memory_over_limit", "postgres_race_condition"]
+
+  # Router H errors answer with status 503, so the Grafana "5xx responses" rule
+  # on the router ServerErrors metric alerts on them. Their filter only feeds
+  # dashboards.
+  grafana_alerted_log_metrics = ["heroku_http_error"]
 }
 
 resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
@@ -199,7 +204,7 @@ resource "aws_cloudwatch_log_metric_filter" "log_alarm" {
 resource "aws_cloudwatch_metric_alarm" "log_alarm" {
   for_each = {
     for key, alarm in local.log_metric_alarms : key => alarm
-    if !contains(concat(local.grafana_paged_log_metrics, var.log_metrics_without_alarm), key)
+    if !contains(concat(local.grafana_paged_log_metrics, local.grafana_alerted_log_metrics, var.log_metrics_without_alarm), key)
   }
 
   alarm_name          = each.value.alarm_name

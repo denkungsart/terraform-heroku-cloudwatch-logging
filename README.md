@@ -49,4 +49,4 @@ module "observability_link_us_east_1" {
 
 ## Paging
 
-The log filters for Redis `used_memory_over_limit` and the PostgreSQL type map race condition only feed metrics: Grafana alert rules in the monitoring account page on them, so this module creates no CloudWatch alarm and no PagerDuty SNS topic for them. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored. The other alarms email `alert_email`.
+The log filters for Redis `used_memory_over_limit` and the PostgreSQL type map race condition only feed metrics: Grafana alert rules in the monitoring account page on them, so this module creates no CloudWatch alarm and no PagerDuty SNS topic for them. The `HerokuHTTPError` filter has no alarm either: router H errors answer with status 503, so the Grafana "5xx responses" rule on `ServerErrors` alerts on them, and the filter only feeds dashboards. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored. The other alarms email `alert_email`.

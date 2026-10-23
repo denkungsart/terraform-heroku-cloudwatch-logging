@@ -44,7 +44,7 @@ variable "log_metrics_without_alarm" {
 
   validation {
     condition = alltrue([for key in var.log_metrics_without_alarm : contains([
-      "api_401_unauthorized", "heroku_http_error", "heroku_logplex_l10", "heroku_runtime_error",
+      "api_401_unauthorized", "heroku_logplex_l10", "heroku_runtime_error",
       "poison_pill", "rack_attack_blocklist", "rack_attack_throttle", "redis_command_error",
       "sentry_error",
     ], key)])
