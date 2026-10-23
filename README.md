@@ -12,11 +12,7 @@ Firehose bills every record as at least 5 KB, so the handler packs the lines of 
 
 Set `resource_namespace` for installations that share an AWS account. When unset, the module keeps the original un-namespaced resource names for backwards-compatible migrations.
 
-The Rack::Attack status=429 alarm is present but notification actions are disabled by default. Set `enable_rack_attack_throttle_alert = true` to enable those notifications.
-
-To keep a log metric for dashboards without its CloudWatch alarm, list its key in `log_metrics_without_alarm`, for example `["rack_attack_blocklist"]` for an app whose blocklist matches every day. An alarm that sits in ALARM permanently never notifies again, so it only hides new problems.
-
-`enable_redis_load_avg_alert` and `app_fqdn` are deprecated and ignored.
+`enable_redis_load_avg_alert`, `app_fqdn`, `enable_rack_attack_throttle_alert`, `log_metrics_without_alarm` and `heroku_app_name` are deprecated and ignored.
 
 ## Heroku metrics
 
@@ -47,6 +43,8 @@ module "observability_link_us_east_1" {
 }
 ```
 
-## Paging
+## Alerts
 
-The log filters for Redis `used_memory_over_limit` and the PostgreSQL type map race condition only feed metrics: Grafana alert rules in the monitoring account page on them, so this module creates no CloudWatch alarm and no PagerDuty SNS topic for them. The `HerokuHTTPError` filter has no alarm either: router H errors answer with status 503, so the Grafana "5xx responses" rule on `ServerErrors` alerts on them, and the filter only feeds dashboards. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored. The other alarms email `alert_email`.
+The log metric filters (Redis errors and memory limit, Heroku H and R errors, Logplex L10, Sidekiq poison pills, Rack::Attack throttling, API 401s, Sentry client errors and the PostgreSQL type map race condition) only feed metrics, so this module creates no CloudWatch alarm for them. Grafana alert rules in the monitoring account alert on most of them and on the apps' Sidekiq queue latency. `RackAttackThrottle` and `HerokuHTTPError` only feed dashboards: router H errors answer with status 503, so the Grafana "5xx responses" rule on `ServerErrors` covers them.
+
+The only alarm left here is `HerokuMetricsMissing`, which emails `alert_email`. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored.

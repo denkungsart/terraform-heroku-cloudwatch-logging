@@ -5,7 +5,7 @@ variable "app_name" {
 
 variable "app_fqdn" {
   type        = string
-  description = "Deprecated and ignored: the module configures no CORS and names the Sidekiq namespace after heroku_app_name. Remove this argument from module calls."
+  description = "Deprecated and ignored: the module configures no CORS. Remove this argument from module calls."
   default     = null
 }
 
@@ -33,23 +33,14 @@ variable "resource_namespace" {
 
 variable "enable_rack_attack_throttle_alert" {
   type        = bool
-  description = "Enable SNS notifications for the Rack::Attack status=429 throttle alarm."
+  description = "Deprecated and ignored: the log metric alarms moved to Grafana, which has no Rack::Attack throttle rule. Remove this argument from module calls."
   default     = false
 }
 
 variable "log_metrics_without_alarm" {
   type        = list(string)
-  description = "Log alarm keys, such as rack_attack_blocklist, whose metric filter stays for dashboards but which get no CloudWatch alarm. Use it for alarms that would sit in ALARM permanently for this app."
+  description = "Deprecated and ignored: the log metric alarms moved to Grafana. Remove this argument from module calls."
   default     = []
-
-  validation {
-    condition = alltrue([for key in var.log_metrics_without_alarm : contains([
-      "api_401_unauthorized", "heroku_logplex_l10", "heroku_runtime_error",
-      "poison_pill", "rack_attack_blocklist", "rack_attack_throttle", "redis_command_error",
-      "sentry_error",
-    ], key)])
-    error_message = "log_metrics_without_alarm may only contain keys of the module's log alarms, such as rack_attack_blocklist."
-  }
 }
 
 variable "enable_redis_load_avg_alert" {
@@ -65,7 +56,7 @@ variable "heroku_app_id" {
 
 variable "heroku_app_name" {
   type        = string
-  description = "The Heroku app name, which Rails uses for the Sidekiq metric namespace. Defaults to app_name; set it when the Heroku app is named differently."
+  description = "Deprecated and ignored: the Sidekiq queue latency alarm moved to Grafana. Remove this argument from module calls."
   default     = null
 }
 
