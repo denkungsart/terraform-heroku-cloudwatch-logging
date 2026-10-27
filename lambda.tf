@@ -76,11 +76,12 @@ module "heroku_logs_lambda" {
 
   # The handler only logs errors. Platform START/END/REPORT lines are dropped,
   # because the drain invokes the function many times a minute.
-  attach_cloudwatch_logs_policy     = true
-  cloudwatch_logs_retention_in_days = 30
-  logging_log_format                = "JSON"
-  logging_application_log_level     = "WARN"
-  logging_system_log_level          = "WARN"
+  attach_cloudwatch_logs_policy      = true
+  attach_create_log_group_permission = false # The module creates the log group
+  cloudwatch_logs_retention_in_days  = 30
+  logging_log_format                 = "JSON"
+  logging_application_log_level      = "WARN"
+  logging_system_log_level           = "WARN"
 
   attach_policy_json       = false
   attach_policy_statements = true
