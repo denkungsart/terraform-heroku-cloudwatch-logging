@@ -45,6 +45,6 @@ module "observability_link_us_east_1" {
 
 ## Alerts
 
-The log metric filters (Redis errors and memory limit, Heroku H and R errors, Logplex L10, Sidekiq poison pills, Rack::Attack throttling, API 401s, Sentry client errors and the PostgreSQL type map race condition) only feed metrics, so this module creates no CloudWatch alarm for them. Grafana alert rules in the monitoring account alert on most of them and on the apps' Sidekiq queue latency. `RackAttackThrottle` and `HerokuHTTPError` only feed dashboards: router H errors answer with status 503, so the Grafana "5xx responses" rule on `ServerErrors` covers them.
+The log metric filters (Redis errors and memory limit, Heroku H and R errors, Logplex L10, Sidekiq poison pills, Rack::Attack throttling, API 401s, Sentry client errors, requests over Puma's length limits and the PostgreSQL type map race condition) only feed metrics, so this module creates no CloudWatch alarm for them. Grafana alert rules in the monitoring account alert on most of them and on the apps' Sidekiq queue latency. `RackAttackThrottle` and `HerokuHTTPError` only feed dashboards: router H errors answer with status 503, so the Grafana "5xx responses" rule on `ServerErrors` covers them.
 
 The only alarm left here is `HerokuMetricsMissing`, which emails `alert_email`. `pagerduty_aws_cloudwatch_integration_key` is deprecated and ignored.
