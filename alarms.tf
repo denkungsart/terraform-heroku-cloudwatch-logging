@@ -72,6 +72,17 @@ locals {
       metric_namespace = "${local.namespace_prefix}/Sentry"
     }
 
+    # Puma answers a request over one of its length limits (query string 10 KB,
+    # URI 12 KB, path 8 KB, headers) with an empty 400 before the app sees it,
+    # so neither the app nor Sentry reports it. Its other rejections, malformed
+    # requests and unsupported methods, come from scanners and broken clients.
+    puma_request_too_long = {
+      filter_name      = "${var.app_name}_PumaRequestTooLong"
+      pattern          = "\"is longer than the\" \"allowed length\""
+      metric_name      = "PumaRequestTooLong"
+      metric_namespace = "${local.namespace_prefix}/Puma"
+    }
+
     postgres_race_condition = {
       filter_name      = "${var.app_name}_PostgresRaceCondition"
       pattern          = "\"undefined method 'key?' for nil\""
