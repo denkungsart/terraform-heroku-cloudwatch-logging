@@ -13,9 +13,12 @@ locals {
       metric_namespace = "${local.namespace_prefix}/Redis"
     }
 
+    # Sidekiq talks to Redis through redis-client, whose errors are logged
+    # as RedisClient::CommandError, so match a full Redis server's
+    # refusal by its message.
     redis_command_error = {
       filter_name      = "${var.app_name}_RedisCommandError"
-      pattern          = "?\"Redis::CommandError\" ?\"redis critical\""
+      pattern          = "?\"Redis::CommandError\" ?\"redis critical\" ?\"max number of clients reached\""
       metric_name      = "RedisCommandError"
       metric_namespace = "${local.namespace_prefix}/Redis"
     }
